@@ -94,8 +94,52 @@ async function getOrderDetail(order_sn, uid) {
     }
 }
 
+/**
+ * 按订单号查询订单（支付回调核验用）
+ * @param {string} order_sn
+ */
+async function getOrderBySn(order_sn) {
+    const db = new MySQL();
+    const sqlGetOrder = 'select * from pp_order where order_sn = ?';
+    try {
+        const res = await db.query(sqlGetOrder, [order_sn]);
+        return res[0];
+    } catch (error) {
+        console.error('[order] getOrderBySn error:', error);
+    } finally {
+        db.close();
+    }
+}
+
+/**
+ * 标记订单已支付（支付回调落库，幂等）
+ * 仅当 pay_status=0 时更新，微信重复通知不会重复写
+ * @param {string} order_sn 商户订单号
+ * @param {string} transaction_id 微信支付订单号
+ * @param {string} timeEnd 微信回调 time_end（YYYYMMDDHHmmss）
+ * @returns affectedRows：1=本次落库成功；0=已支付过或订单不存在
+ */
+async function markOrderPaid(order_sn, transaction_id, timeEnd) {
+    const db = new MySQL();
+    const payTime = timeEnd
+        ? `${timeEnd.slice(0, 4)}-${timeEnd.slice(4, 6)}-${timeEnd.slice(6, 8)} ${timeEnd.slice(8, 10)}:${timeEnd.slice(10, 12)}:${timeEnd.slice(12, 14)}`
+        : null;
+    const sqlMarkPaid = 'UPDATE pp_order SET pay_status = 1, transaction_id = ?, pay_time = ? WHERE order_sn = ? AND pay_status = 0';
+    try {
+        const res = await db.query(sqlMarkPaid, [transaction_id, payTime, order_sn]);
+        return res.affectedRows;
+    } catch (error) {
+        console.error('[order] markOrderPaid error:', error);
+        return -1;
+    } finally {
+        db.close();
+    }
+}
+
 module.exports = {
     createOrder,
     getOrderDetail,
     getOrderList,
+    getOrderBySn,
+    markOrderPaid,
 };

@@ -151,7 +151,7 @@ pangpai-car/
 | `/queryWxPayOrder` | GET | 微信支付查单（v1.1.0 新挂载，管理端用） |
 | `/applyRefund` | POST | 申请退款（v1.1.0 新挂载，管理端用，走 p12 证书） |
 
-**回调处理现状**：验签通过后打日志，并通过**企业微信**按 `.env` 中 `WORK_NOTIFY_USERID` 推送小程序通知消息（新订单实时通知，通知内容为真实 `out_trade_no`）；**订单状态落库仍为 TODO，未闭环**。
+**回调处理流程（v1.5.0 起闭环）**：验签 → 订单存在性核验 → **金额核验**（回调 total_fee vs 订单 total_price×100）→ **落库**（`pay_status=1`、`transaction_id`、`pay_time`，`WHERE pay_status=0` 保证幂等）→ 企业微信通知员工 → 应答 SUCCESS。验签失败/订单不存在/金额不一致/DB 异常应答 FAIL（微信按 15s/1m/…策略重推）；重复通知幂等跳落后仍应答 SUCCESS。
 
 ### 2.4 运营管理
 
@@ -175,7 +175,7 @@ pangpai-car/
 | 表名 | 用途 | 字段 |
 |---|---|---|
 | `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time |
-| `pp_order` | 租车订单 | id, order_sn(50), uid, contact_phone(20), car_id, rent_day(**varchar(5)**), rent_day_price, rent_total_price, server_day_price/server_total_price（保险）, driver_price/driver_total_price, total_price, pickup_address(100), return_address(100), pickup_time/return_time(**varchar(50)，毫秒时间戳字符串**), create_time, update_time |
+| `pp_order` | 租车订单 | id, order_sn(50), uid, contact_phone(20), car_id, rent_day(**varchar(5)**), rent_day_price, rent_total_price, server_day_price/server_total_price（保险）, driver_price/driver_total_price, total_price, **pay_status（0待支付 1已支付 2已退款 3支付失败，v1.5.0）**, **transaction_id（微信支付单号）**, **pay_time**, **order_status（履约：0待取车 1已取车 2已还车 3已完成 4已取消，v1.5.0）**, pickup_address(100), return_address(100), pickup_time/return_time(**varchar(50)，毫秒时间戳字符串**), create_time, update_time |
 | `adp_user` | 多业务线统一用户 | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), openid(50)（存量字段，新用户不再写入）, phone(20), create_time, update_time |
 | `adp_user_auth` | 用户授权表（v1.4.0，一个小程序一行） | id, user_id, biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 (biz_code, openid) |
 | `pp_driver` | 驾驶证信息 | id, user_id, driver_idcard_name(10), driver_idcard_number(50), driver_idcard_url(200), driver_idcard_birth(20), create_time, update_time |
@@ -198,7 +198,7 @@ pangpai-car/
 
 | # | 问题 | 风险等级 | 状态 |
 |---|---|---|---|
-| 1 | 支付回调不更新订单状态（TODO），支付与订单未闭环 | 高 | 待办 |
+| 1 | 支付回调不更新订单状态（TODO），支付与订单未闭环 | 高 | **v1.5.0 已修复（落库 + 金额核验 + 幂等）** |
 | 2 | 所有接口无鉴权，uid 由前端传参即信任 | 高 | 待办 |
 | 3 | 订单号仅到秒级、无随机位，并发重号风险 | 中 | 待办 |
 | 4 | `model/user.js` INSERT 驾驶证占位符 6 个 `?` 只传 5 个值 | 中 | **v1.1.0 已修复** |
@@ -221,3 +221,4 @@ pangpai-car/
 | v1.3.0 | 2026-10-07 | 移除 CPS 联盟业务线：① 删除 `services/jd/union.js`、`tasks/fetchJdOrders.js`、`tasks/syncVipGoods.js` 及空目录 `services/jd/`；② 移除 `.env`/`.env.example` 中 `JD_APP_KEY/JD_APP_SECRET`、配置中心 `jd` 段、`npm run task:jd` 脚本；③ 卸载仅联盟使用的 `crypto-js` 依赖；④ 文档同步：删除第 3 节联盟业务、`union_goods` 表与相关 backlog 项，章节重编号 | 项目回归纯租车单一业务；接口无任何变化，冒烟测试与 token 刷新任务验证通过；`union_goods` 表数据未清理，需要时可于数据库手动删除 |
 | v1.3.1 | 2026-10-07 | 本地开发环境打通：① 修复 `localhost` DNS 解析失败（aTrust 覆盖 hosts，`DB_HOST` 改用 IP）；② `.env` 切换为直连线上生产库 `mike`（42.194.245.3，用户决策：本地与线上共用生产数据）；③ `scripts/local-dev-init.sql` 按线上真实表结构重写（含种子数据），作为离线备份环境；④ 需求文档数据库一节按线上实际结构校准，补充线上遗留表清单 | `getCarList` 已返回线上 12 辆真实车辆；注意本地调试的写操作（注册/下单/支付）会直接写入生产库 |
 | v1.4.0 | 2026-10-07 | 多小程序共享用户体系：① 线上新建 `adp_user_auth` 授权表（唯一键 biz_code+openid，预留 unionid/app_id），`adp_user` 47 条存量 openid 全量迁移；② `registerUserByOpenid` 重写为三步查找（openid 命中 → unionid 跨业务关联 → 新建用户+授权）；③ 业务标识 `BIZ_CODE` 入 `.env`；④ `local-dev-init.sql` 同步授权表结构 | 当前两小程序不同开放平台、暂无 unionid，跨业务关联预留通路待开放平台合并后自动生效；线上已用真实 openid 验证登录命中路径（无写入） |
+| v1.5.0 | 2026-10-07 | 支付回调落库闭环：① 线上 `pp_order` 新增 `pay_status`/`transaction_id`/`pay_time`/`order_status` 四字段；② 回调处理重写：验签 → 订单存在性 → 金额核验（分）→ 幂等落库（`WHERE pay_status=0`）→ 企微通知 → 应答，全分支正确应答（FAIL 触发微信重推）；③ 订单模型新增 `getOrderBySn`/`markOrderPaid` | 已用「合法签名假订单」正向测试（验签通过→订单不存在拒绝）与「篡改签名」反向测试（验签拒绝）验证，未污染生产数据；backlog #1 关闭 |
