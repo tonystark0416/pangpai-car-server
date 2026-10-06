@@ -210,9 +210,26 @@ pangpai-car/
 
 ## 4. 部署
 
-- 服务器：宝塔环境，Node 只监听 HTTP 3002，HTTPS 由前置 Nginx 终结。
-- 启动：`pangpaicar_start.sh` → PM2 `ecosystem.config.cjs`（脚本需按新结构核对一次）。
-- 本地开发：复制 `.env.example` 为 `.env`，`npm install && npm run dev`。
+### 4.1 后端（API 服务）
+
+- 服务器：宝塔环境（42.194.245.3），Node 只监听 HTTP 3002，HTTPS 由前置 Nginx 终结。
+- 启动：`pangpaicar_start.sh` → PM2 `ecosystem.config.cjs`（v1.6.1 起配置文件入库，应用名 `pangpaicar`，日志 `logs/`）。
+- 环境变量：服务器上维护 `.env`（含 DB / 微信 / 支付 / 企微 / JWT 密钥），模板见 `.env.example`。
+- 部署步骤：`git pull` → `npm install` → `pm2 restart pangpaicar`（首次 `pm2 start ecosystem.config.cjs`）。
+
+### 4.2 管理后台（admin-web，v1.6.0 起）
+
+- 开发：`admin-web/` 下 `npm install && npm run dev`（vite 代理 `/admin-api`、`/images` 至 `127.0.0.1:3002`）。
+- 生产构建：`npm run build` 产出 `admin-web/dist/`，由 Nginx 静态托管（建议独立域名/端口或路径前缀，并做访问控制）。
+
+### 4.3 本地开发
+
+- 复制 `.env.example` 为 `.env`（`DB_HOST` 用 IP 直连，勿用 `localhost`——部分环境下 hosts 缺失条目会导致 ENOTFOUND）。
+- 后端 `npm install && npm run dev`（3002）；管理后台另起 `admin-web` 的 dev（5173）。
+- 当前 `.env` 直连线上生产库：**本地调试的写操作（注册/下单/支付/后台改数据）会直接写生产数据**。
+- 离线备用环境：`scripts/local-dev-init.sql` 一键重建同构表结构 + 种子数据。
+
+> 路径已全部可配置：`UPLOAD_DIR`/`TOKEN_DIR`/`WX_PFX_PATH` 不再写死 `/www/wwwroot/...`。
 - 路径已全部改为可配置：`UPLOAD_DIR`/`TOKEN_DIR`/`WX_PFX_PATH` 不再写死 `/www/wwwroot/...`。
 
 ---
@@ -246,3 +263,4 @@ pangpai-car/
 | v1.4.0 | 2026-10-07 | 多小程序共享用户体系：① 线上新建 `adp_user_auth` 授权表（唯一键 biz_code+openid，预留 unionid/app_id），`adp_user` 47 条存量 openid 全量迁移；② `registerUserByOpenid` 重写为三步查找（openid 命中 → unionid 跨业务关联 → 新建用户+授权）；③ 业务标识 `BIZ_CODE` 入 `.env`；④ `local-dev-init.sql` 同步授权表结构 | 当前两小程序不同开放平台、暂无 unionid，跨业务关联预留通路待开放平台合并后自动生效；线上已用真实 openid 验证登录命中路径（无写入） |
 | v1.5.0 | 2026-10-07 | 支付回调落库闭环：① 线上 `pp_order` 新增 `pay_status`/`transaction_id`/`pay_time`/`order_status` 四字段；② 回调处理重写：验签 → 订单存在性 → 金额核验（分）→ 幂等落库（`WHERE pay_status=0`）→ 企微通知 → 应答，全分支正确应答（FAIL 触发微信重推）；③ 订单模型新增 `getOrderBySn`/`markOrderPaid` | 已用「合法签名假订单」正向测试（验签通过→订单不存在拒绝）与「篡改签名」反向测试（验签拒绝）验证，未污染生产数据；backlog #1 关闭 |
 | v1.6.0 | 2026-10-07 | 管理后台第一期：① 后端 `/admin-api`：JWT 登录（`adp_admin_user` + bcrypt + `last_login_at`）、概览统计、用户（列表/详情含授权记录与驾驶证）、车辆（CRUD，有关联订单拒删）、订单（列表筛选/详情/履约状态流转）；② 前端 `admin-web/`（Vue3+Vite+Element Plus+Pinia）：登录、概览、订单/车辆/用户三模块页面；③ 新增依赖 `jsonwebtoken`/`bcryptjs`；④ `.env` 新增 `ADMIN_JWT_SECRET`/`ADMIN_JWT_EXPIRES` | 管理端接口全部经本地签发 token 对线上库只读验证通过（47 用户/12 车辆/38 订单）；后台实际部署后端仍需上线；`admin-web` build 产物 362KB CSS + 1MB JS（gzip 350KB） |
+| v1.6.1 | 2026-10-07 | 部署配置补齐：① `ecosystem.config.cjs` 入库（PM2 应用 `pangpaicar`，日志 `logs/`）；② 需求文档部署一节重写（后端 PM2/管理后台 Nginx 静态托管/本地开发注意事项） | 无代码逻辑变化 |
