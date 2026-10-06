@@ -1,10 +1,12 @@
 # 依赖
 node_modules/
-package-lock.json.bak
 
-# 敏感信息：证书、密钥配置、token 缓存（严禁入库）
+# 敏感信息：环境变量、证书、密钥配置、token 缓存（严禁入库）
+.env
+.env.local
+.env.*.local
 https/
-src/file/
+src/data/
 src/config/mysql_config.js
 src/config/wx_api_config.js
 
@@ -18,7 +20,3 @@ logs/
 .vscode/
 .DS_Store
 Thumbs.db
-
-# 环境文件
-.env
-.env.*
