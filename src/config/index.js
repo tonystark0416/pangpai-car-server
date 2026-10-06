@@ -42,6 +42,12 @@ const config = {
     code: env('BIZ_CODE', 'pp'),
   },
 
+  /** 管理后台 JWT */
+  adminJwt: {
+    secret: env('ADMIN_JWT_SECRET'),
+    expiresIn: env('ADMIN_JWT_EXPIRES', '12h'),
+  },
+
   /** 微信支付 V2 */
   wxPay: {
     appid: env('WX_APPID'),

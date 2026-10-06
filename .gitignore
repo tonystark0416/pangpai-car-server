@@ -1,6 +1,9 @@
 # 依赖
 node_modules/
 
+# 管理后台构建产物
+admin-web/dist/
+
 # 敏感信息：环境变量、证书、密钥配置、token 缓存（严禁入库）
 .env
 .env.local

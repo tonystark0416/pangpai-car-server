@@ -155,10 +155,33 @@ pangpai-car/
 
 ### 2.4 运营管理
 
+#### 管理后台（v1.6.0，`/admin-api`，JWT 鉴权）
+
+| 接口 | 方法 | 说明 |
+|---|---|---|
+| `/admin-api/auth/login` | POST | 管理员登录（`adp_admin_user` 表，bcrypt 校验），返回 JWT；同时更新 `last_login_at` |
+| `/admin-api/auth/profile` | GET | 当前管理员信息 |
+| `/admin-api/dashboard/stats` | GET | 概览统计（用户/车辆/订单总数、已支付数、今日订单/支付金额） |
+| `/admin-api/users` | GET | 用户分页列表（关键词支持手机号/昵称/openid），附订单数与授权数 |
+| `/admin-api/users/:id` | GET | 用户详情（授权记录 `adp_user_auth`、驾驶证、最近 20 单） |
+| `/admin-api/cars` | GET | 车辆分页列表（关键词） |
+| `/admin-api/cars` | POST | 新增车辆 |
+| `/admin-api/cars/:id` | PUT | 编辑车辆 |
+| `/admin-api/cars/:id` | DELETE | 删除车辆（**存在关联订单时拒绝删除**） |
+| `/admin-api/orders` | GET | 订单分页列表（筛选：pay_status/order_status/关键词），联表车辆信息 |
+| `/admin-api/orders/:id` | GET | 订单详情（含车辆与下单用户信息） |
+| `/admin-api/orders/:id/status` | PUT | 订单履约状态流转（待取车→已取车→已还车→已完成/已取消） |
+
+管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 可由 Nginx 或 Express 静态托管。
+
+#### 既有运营接口
+
 | 接口 | 方法 | 说明 |
 |---|---|---|
 | `/getQrCode` | GET | 生成不限量小程序码（scene + page），以 image/png 二进制返回，用于地推/渠道投放 |
 | `/workWeixinCallback` | GET | 企业微信回调 URL 验证（仅 echostr 验证，无业务处理） |
+| `/queryWxPayOrder` | GET | 微信支付查单（管理端用） |
+| `/applyRefund` | POST | 申请退款（管理端用，走 p12 证书） |
 
 ### 2.5 定时任务（独立进程）
 
@@ -222,3 +245,4 @@ pangpai-car/
 | v1.3.1 | 2026-10-07 | 本地开发环境打通：① 修复 `localhost` DNS 解析失败（aTrust 覆盖 hosts，`DB_HOST` 改用 IP）；② `.env` 切换为直连线上生产库 `mike`（42.194.245.3，用户决策：本地与线上共用生产数据）；③ `scripts/local-dev-init.sql` 按线上真实表结构重写（含种子数据），作为离线备份环境；④ 需求文档数据库一节按线上实际结构校准，补充线上遗留表清单 | `getCarList` 已返回线上 12 辆真实车辆；注意本地调试的写操作（注册/下单/支付）会直接写入生产库 |
 | v1.4.0 | 2026-10-07 | 多小程序共享用户体系：① 线上新建 `adp_user_auth` 授权表（唯一键 biz_code+openid，预留 unionid/app_id），`adp_user` 47 条存量 openid 全量迁移；② `registerUserByOpenid` 重写为三步查找（openid 命中 → unionid 跨业务关联 → 新建用户+授权）；③ 业务标识 `BIZ_CODE` 入 `.env`；④ `local-dev-init.sql` 同步授权表结构 | 当前两小程序不同开放平台、暂无 unionid，跨业务关联预留通路待开放平台合并后自动生效；线上已用真实 openid 验证登录命中路径（无写入） |
 | v1.5.0 | 2026-10-07 | 支付回调落库闭环：① 线上 `pp_order` 新增 `pay_status`/`transaction_id`/`pay_time`/`order_status` 四字段；② 回调处理重写：验签 → 订单存在性 → 金额核验（分）→ 幂等落库（`WHERE pay_status=0`）→ 企微通知 → 应答，全分支正确应答（FAIL 触发微信重推）；③ 订单模型新增 `getOrderBySn`/`markOrderPaid` | 已用「合法签名假订单」正向测试（验签通过→订单不存在拒绝）与「篡改签名」反向测试（验签拒绝）验证，未污染生产数据；backlog #1 关闭 |
+| v1.6.0 | 2026-10-07 | 管理后台第一期：① 后端 `/admin-api`：JWT 登录（`adp_admin_user` + bcrypt + `last_login_at`）、概览统计、用户（列表/详情含授权记录与驾驶证）、车辆（CRUD，有关联订单拒删）、订单（列表筛选/详情/履约状态流转）；② 前端 `admin-web/`（Vue3+Vite+Element Plus+Pinia）：登录、概览、订单/车辆/用户三模块页面；③ 新增依赖 `jsonwebtoken`/`bcryptjs`；④ `.env` 新增 `ADMIN_JWT_SECRET`/`ADMIN_JWT_EXPIRES` | 管理端接口全部经本地签发 token 对线上库只读验证通过（47 用户/12 车辆/38 订单）；后台实际部署后端仍需上线；`admin-web` build 产物 362KB CSS + 1MB JS（gzip 350KB） |
