@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+package-lock.json.bak
+
+# 敏感信息：证书、密钥配置、token 缓存（严禁入库）
+https/
+src/file/
+src/config/mysql_config.js
+src/config/wx_api_config.js
+
+# 运行时产物
+uploads/
+*.log
+logs/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 环境文件
+.env
+.env.*
