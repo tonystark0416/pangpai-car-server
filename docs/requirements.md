@@ -101,7 +101,7 @@ pangpai-car/
 | 接口 | 方法 | 说明 |
 |---|---|---|
 | `/getOpenid` | GET | 小程序 `code` 调微信 `jscode2session` 换 openid |
-| `/tryLogin` | GET | openid 联合登录：`adp_user` 表（`biz_code='pp'`）存在即登录，不存在自动注册 |
+| `/tryLogin` | GET | openid 联合登录（自动注册），查找顺序见下 |
 | `/getUserDriverInfo` | GET | 按 uid 查询驾驶证信息 |
 | `/updateUserDriverInfo` | GET | 新增/更新驾驶证信息（姓名、身份证号、身份证图片 URL、出生日期） |
 | `/getIdCardInfo` | GET | 微信 OCR 身份证识别（`cv/ocr/idcard`），传 `img_url` |
@@ -109,6 +109,14 @@ pangpai-car/
 | `/images/*` | GET | 静态图片服务（`express.static`，1 小时浏览器缓存） |
 
 **流程**：上传身份证照片 → OCR 识别回填 → 保存至 `pp_driver` 表。
+
+**多小程序共享用户设计（v1.4.0）**：两个业务小程序共用 `adp_user` 统一身份，登录态走 `adp_user_auth` 授权表（一个小程序一行）。`/tryLogin` 查找顺序：
+
+1. 按 `(biz_code, openid)` 查授权表 → 命中直接登录
+2. 传入 `unionid` 且 ①未命中 → 按 unionid 找到其他小程序的授权 → 复用同一 `user_id`（跨业务自动关联）
+3. 均未命中 → 新建 `adp_user` + `adp_user_auth`
+
+当前两小程序不在同一开放平台下、暂无 unionid，跨业务关联先依赖手机号等后续手段；表结构与代码已预留 unionid 通路，未来绑定同一开放平台后自动生效。业务标识由 `.env` 的 `BIZ_CODE` 配置（当前 `pp`）。`adp_user.openid` 为存量字段（47 条已迁移至授权表），新用户不再写入该列。
 
 ### 2.2 车辆与订单
 
@@ -168,7 +176,8 @@ pangpai-car/
 |---|---|---|
 | `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time |
 | `pp_order` | 租车订单 | id, order_sn(50), uid, contact_phone(20), car_id, rent_day(**varchar(5)**), rent_day_price, rent_total_price, server_day_price/server_total_price（保险）, driver_price/driver_total_price, total_price, pickup_address(100), return_address(100), pickup_time/return_time(**varchar(50)，毫秒时间戳字符串**), create_time, update_time |
-| `adp_user` | 多业务线统一用户 | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), openid(50), phone(20), create_time, update_time |
+| `adp_user` | 多业务线统一用户 | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), openid(50)（存量字段，新用户不再写入）, phone(20), create_time, update_time |
+| `adp_user_auth` | 用户授权表（v1.4.0，一个小程序一行） | id, user_id, biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 (biz_code, openid) |
 | `pp_driver` | 驾驶证信息 | id, user_id, driver_idcard_name(10), driver_idcard_number(50), driver_idcard_url(200), driver_idcard_birth(20), create_time, update_time |
 
 > 尚未建立但需要：订单**支付状态字段/表**（当前回调不落库）。
@@ -211,3 +220,4 @@ pangpai-car/
 | v1.2.0 | 2026-10-07 | 工程架构重排（标准 Express 分层）：① `src/server/{controller,model,base,admin,task,router}` 与 `src/util` 重组为 `src/{routes,controllers,models,services,middlewares,utils,tasks}`；② 微信 API 双文件合并（`weixin-api.js` + `weixin.api.js` → `services/wechat/miniprogram.js`），小程序码与企微回调控制器合并（`wechat.controller.js`），multer 拆为中间件 + 控制器；③ `src/file` → `src/data`（证书与 token 缓存）；④ 清理死代码：`router/` 遗留、`unionOrder.js`、`union_tran_url.js`、`meituan.js`、`parse_query.js`、`goods.js`；⑤ 任务脚本加 `require.main` 保护并统一命名 | 接口路径与响应结构不变；上传/静态图片/404/异常兜底全链路冒烟测试通过 |
 | v1.3.0 | 2026-10-07 | 移除 CPS 联盟业务线：① 删除 `services/jd/union.js`、`tasks/fetchJdOrders.js`、`tasks/syncVipGoods.js` 及空目录 `services/jd/`；② 移除 `.env`/`.env.example` 中 `JD_APP_KEY/JD_APP_SECRET`、配置中心 `jd` 段、`npm run task:jd` 脚本；③ 卸载仅联盟使用的 `crypto-js` 依赖；④ 文档同步：删除第 3 节联盟业务、`union_goods` 表与相关 backlog 项，章节重编号 | 项目回归纯租车单一业务；接口无任何变化，冒烟测试与 token 刷新任务验证通过；`union_goods` 表数据未清理，需要时可于数据库手动删除 |
 | v1.3.1 | 2026-10-07 | 本地开发环境打通：① 修复 `localhost` DNS 解析失败（aTrust 覆盖 hosts，`DB_HOST` 改用 IP）；② `.env` 切换为直连线上生产库 `mike`（42.194.245.3，用户决策：本地与线上共用生产数据）；③ `scripts/local-dev-init.sql` 按线上真实表结构重写（含种子数据），作为离线备份环境；④ 需求文档数据库一节按线上实际结构校准，补充线上遗留表清单 | `getCarList` 已返回线上 12 辆真实车辆；注意本地调试的写操作（注册/下单/支付）会直接写入生产库 |
+| v1.4.0 | 2026-10-07 | 多小程序共享用户体系：① 线上新建 `adp_user_auth` 授权表（唯一键 biz_code+openid，预留 unionid/app_id），`adp_user` 47 条存量 openid 全量迁移；② `registerUserByOpenid` 重写为三步查找（openid 命中 → unionid 跨业务关联 → 新建用户+授权）；③ 业务标识 `BIZ_CODE` 入 `.env`；④ `local-dev-init.sql` 同步授权表结构 | 当前两小程序不同开放平台、暂无 unionid，跨业务关联预留通路待开放平台合并后自动生效；线上已用真实 openid 验证登录命中路径（无写入） |

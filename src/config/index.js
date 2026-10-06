@@ -37,6 +37,11 @@ const config = {
     secret: env('WX_SECRET'),
   },
 
+  /** 业务标识：区分共用 adp_user 的多个小程序（auth 表的 biz_code） */
+  biz: {
+    code: env('BIZ_CODE', 'pp'),
+  },
+
   /** 微信支付 V2 */
   wxPay: {
     appid: env('WX_APPID'),

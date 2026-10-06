@@ -85,6 +85,25 @@ CREATE TABLE pp_driver (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='驾驶证信息表';
 
+-- ------------------------------------------------------------
+-- 用户授权表（v1.4.0）：一个小程序一行，跨业务共享 adp_user
+-- ------------------------------------------------------------
+DROP TABLE IF EXISTS adp_user_auth;
+CREATE TABLE adp_user_auth (
+  id          INT(10) NOT NULL AUTO_INCREMENT,
+  user_id     INT(10) NOT NULL COMMENT '关联 adp_user.id',
+  biz_code    VARCHAR(11) NOT NULL DEFAULT 'pp' COMMENT '业务编码：pp=租车小程序',
+  app_id      VARCHAR(32) DEFAULT NULL COMMENT '小程序appid（预留）',
+  openid      VARCHAR(50) NOT NULL COMMENT '该小程序下的openid',
+  unionid     VARCHAR(50) DEFAULT NULL COMMENT '微信unionid（跨小程序识别同一用户，待开放平台关联后启用）',
+  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_biz_openid (biz_code, openid),
+  KEY idx_user (user_id),
+  KEY idx_unionid (unionid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户授权表（一个小程序一行）';
+
 -- ============================================================
 -- 种子数据（本地联调用，字段取自线上结构）
 -- ============================================================

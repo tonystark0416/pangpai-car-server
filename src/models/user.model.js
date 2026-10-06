@@ -33,31 +33,56 @@ async function registerUser(biz_code, phone) {
 }
 
 /**
- * 根据openid自动注册，这里强制指小程序openid
- * @param {*} biz_code 业务编码
- * @param {*} openid 微信openid
- * @returns
+ * 根据 openid 自动注册/登录（v1.4.0 起走 adp_user_auth 授权表）
+ *
+ * 查找顺序：
+ * ① (biz_code, openid) 精确命中 → 直接返回用户
+ * ② 提供 unionid 且 ①未命中 → 按 unionid 找到其他小程序的授权 → 复用同一 user_id（跨端自动关联）
+ * ③ 均未命中 → 新建 adp_user + adp_user_auth
+ *
+ * @param {string} biz_code 业务编码（区分共用 adp_user 的多个小程序）
+ * @param {string} openid 该小程序下的微信 openid
+ * @param {string} [unionid] 微信 unionid（两个小程序同属一个开放平台时才有，暂无）
+ * @returns 用户行 | undefined
  */
-async function registerUserByOpenid(biz_code, openid) {
+async function registerUserByOpenid(biz_code, openid, unionid) {
     const db = new MySQL();
-    const sqlCheckUser = "select * from adp_user where openid = ?";
-    const sqlRegisterUser = "INSERT INTO adp_user (biz_code,openid) values (?,?)";
+    const sqlSelectUserByAuth =
+        "SELECT u.* FROM adp_user u JOIN adp_user_auth a ON a.user_id = u.id WHERE a.biz_code = ? AND a.openid = ? LIMIT 1";
+    const sqlSelectUserByUnionid =
+        "SELECT u.* FROM adp_user u JOIN adp_user_auth a ON a.user_id = u.id WHERE a.unionid = ? LIMIT 1";
+    const sqlInsertUser = "INSERT INTO adp_user (biz_code) values (?)";
+    const sqlInsertAuth =
+        "INSERT INTO adp_user_auth (user_id, biz_code, openid, unionid) values (?,?,?,?)";
 
     try {
-        const res = await db.query(sqlCheckUser, openid)
-        if (res[0]) {
-            console.log('openid已存在绑定用户，可以直接登陆')
-            return res[0]
-        } else {
-            const res = await db.query(sqlRegisterUser, [biz_code, openid])
-            if (res.affectedRows > 0) {
-                console.log('新账号注册成功')
-                const checkRes = await db.query(sqlCheckUser, openid)
-                return checkRes[0]
+        // ① 按 (biz_code, openid) 查授权
+        const authRes = await db.query(sqlSelectUserByAuth, [biz_code, openid]);
+        if (authRes[0]) {
+            console.log(`[user] openid已绑定（biz=${biz_code}），直接登录`);
+            return authRes[0];
+        }
+
+        // ② unionid 跨业务关联：同一个人在另一小程序注册过，补一行授权挂到同一 user_id
+        if (unionid) {
+            const unionRes = await db.query(sqlSelectUserByUnionid, unionid);
+            if (unionRes[0]) {
+                await db.query(sqlInsertAuth, [unionRes[0].id, biz_code, openid, unionid]);
+                console.log(`[user] unionid跨业务关联成功（user_id=${unionRes[0].id}）`);
+                return unionRes[0];
             }
         }
+
+        // ③ 全新用户
+        const insertRes = await db.query(sqlInsertUser, [biz_code]);
+        if (insertRes.insertId > 0) {
+            await db.query(sqlInsertAuth, [insertRes.insertId, biz_code, openid, unionid || null]);
+            console.log(`[user] 新账号注册成功（user_id=${insertRes.insertId}, biz=${biz_code}）`);
+            const checkRes = await db.query("SELECT * FROM adp_user WHERE id = ?", insertRes.insertId);
+            return checkRes[0];
+        }
     } catch (error) {
-        console.error(error);
+        console.error('[user] registerUserByOpenid error:', error);
     } finally {
         db.close();
     }

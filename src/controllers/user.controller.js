@@ -1,6 +1,7 @@
 /**
  * 庞派小程序用户相关接口
  */
+const config = require('../config');
 const weixin = require('../services/wechat/miniprogram');
 const user = require('../models/user.model');
 
@@ -20,9 +21,9 @@ async function getOpenid(req, res) {
  * openid联合登陆，会自动注册
  */
 async function openid_tryLogin(req, res) {
-  const { openid } = req.query;
+  const { openid, unionid } = req.query;
   if (openid) {
-    const result = await user.registerUserByOpenid('pp', openid);
+    const result = await user.registerUserByOpenid(config.biz.code, openid, unionid);
     res.json({ code: 200, msg: '自动登陆成功', result });
   } else {
     res.json({ code: 201, msg: '登陆失败' });
