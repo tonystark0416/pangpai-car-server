@@ -162,14 +162,17 @@ pangpai-car/
 
 ## 3. 数据库设计
 
-| 表名 | 用途 | 主要字段 |
+> v1.3.1 已按线上生产库（`mike`，42.194.245.3）实际结构校准。线上另有历史遗留表：`adp_admin_user`、`adp_banner`、`adp_goods`、`adp_order`、`union_goods`、`verification_codes`（旧业务/管理端，当前代码未使用）。
+
+| 表名 | 用途 | 字段 |
 |---|---|---|
-| `pp_car` | 租赁车辆 | id, promotion_day_price, update_time, 车辆信息字段 |
-| `pp_order` | 租车订单 | order_sn, uid, contact_phone, car_id, rent_day/rent_day_price/rent_total_price, server_day_price/server_total_price（保险）, driver_price/driver_total_price, total_price, pickup_address/return_address, pickup_time/return_time, create_time/update_time |
-| `adp_user` | 多业务线统一用户 | id, biz_code, phone, openid |
-| `pp_driver` | 驾驶证信息 | user_id, driver_idcard_name/number/url/birth |
+| `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time |
+| `pp_order` | 租车订单 | id, order_sn(50), uid, contact_phone(20), car_id, rent_day(**varchar(5)**), rent_day_price, rent_total_price, server_day_price/server_total_price（保险）, driver_price/driver_total_price, total_price, pickup_address(100), return_address(100), pickup_time/return_time(**varchar(50)，毫秒时间戳字符串**), create_time, update_time |
+| `adp_user` | 多业务线统一用户 | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), openid(50), phone(20), create_time, update_time |
+| `pp_driver` | 驾驶证信息 | id, user_id, driver_idcard_name(10), driver_idcard_number(50), driver_idcard_url(200), driver_idcard_birth(20), create_time, update_time |
 
 > 尚未建立但需要：订单**支付状态字段/表**（当前回调不落库）。
+> 本地开发：`scripts/local-dev-init.sql` 可一键重建与线上一致的表结构 + 种子数据；当前 `.env` 直连线上库（注意写操作会入生产数据）。
 
 ---
 
@@ -207,3 +210,4 @@ pangpai-car/
 | v1.1.0 | 2026-10-07 | Express 重构 + .env 配置化：① 原生 http switch 路由改为 Express 分层路由（`src/routes/`）；② 全部密钥/DB/路径配置迁入 `.env`（含京东联盟密钥），新增 `.env.example` 模板与 `src/config/index.js` 配置中心；③ 删除明文配置文件与 `image.js`（由 `express.static` 替代）；④ 新增 `asyncHandler` 与全局异常中间件、MySQL 连接错误容错，DB 故障不再击穿进程；⑤ 新挂载查单 `/queryWxPayOrder`、退款 `/applyRefund` 管理端接口；⑥ 修复 `pp_driver` INSERT 占位符 bug；⑦ token 刷新任务支持启动即刷新，路径可配置 | 旧接口路径与响应结构完全兼容；`npm run dev` 可本地启动 |
 | v1.2.0 | 2026-10-07 | 工程架构重排（标准 Express 分层）：① `src/server/{controller,model,base,admin,task,router}` 与 `src/util` 重组为 `src/{routes,controllers,models,services,middlewares,utils,tasks}`；② 微信 API 双文件合并（`weixin-api.js` + `weixin.api.js` → `services/wechat/miniprogram.js`），小程序码与企微回调控制器合并（`wechat.controller.js`），multer 拆为中间件 + 控制器；③ `src/file` → `src/data`（证书与 token 缓存）；④ 清理死代码：`router/` 遗留、`unionOrder.js`、`union_tran_url.js`、`meituan.js`、`parse_query.js`、`goods.js`；⑤ 任务脚本加 `require.main` 保护并统一命名 | 接口路径与响应结构不变；上传/静态图片/404/异常兜底全链路冒烟测试通过 |
 | v1.3.0 | 2026-10-07 | 移除 CPS 联盟业务线：① 删除 `services/jd/union.js`、`tasks/fetchJdOrders.js`、`tasks/syncVipGoods.js` 及空目录 `services/jd/`；② 移除 `.env`/`.env.example` 中 `JD_APP_KEY/JD_APP_SECRET`、配置中心 `jd` 段、`npm run task:jd` 脚本；③ 卸载仅联盟使用的 `crypto-js` 依赖；④ 文档同步：删除第 3 节联盟业务、`union_goods` 表与相关 backlog 项，章节重编号 | 项目回归纯租车单一业务；接口无任何变化，冒烟测试与 token 刷新任务验证通过；`union_goods` 表数据未清理，需要时可于数据库手动删除 |
+| v1.3.1 | 2026-10-07 | 本地开发环境打通：① 修复 `localhost` DNS 解析失败（aTrust 覆盖 hosts，`DB_HOST` 改用 IP）；② `.env` 切换为直连线上生产库 `mike`（42.194.245.3，用户决策：本地与线上共用生产数据）；③ `scripts/local-dev-init.sql` 按线上真实表结构重写（含种子数据），作为离线备份环境；④ 需求文档数据库一节按线上实际结构校准，补充线上遗留表清单 | `getCarList` 已返回线上 12 辆真实车辆；注意本地调试的写操作（注册/下单/支付）会直接写入生产库 |
