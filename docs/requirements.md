@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.3.0 ｜ 日期：2026-10-07 ｜ 状态：迭代中
+> 版本：v1.6.2 ｜ 日期：2026-10-11 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -248,6 +248,7 @@ pangpai-car/
 | 8 | 支付回调终端 IP、服务器绝对路径硬编码，环境耦合严重 | 中 | **v1.1.0 已修复（全部可配置）** |
 | 9 | 无统一响应模型与错误处理，无日志体系 | 中 | 部分改善（v1.1.0 增加全局异常中间件与 asyncHandler） |
 | 10 | 京东订单 5 秒轮询调试代码 | 低 | **v1.3.0 已随联盟业务删除** |
+| 11 | `src/data/wx_access_token.txt` 缓存不存在时接口直接 ENOENT（新环境/本地未跑 token 任务即触发） | 中 | **v1.6.2 已修复（读取兜底：自动获取 + 自动建目录落盘）** |
 
 ---
 
@@ -264,3 +265,4 @@ pangpai-car/
 | v1.5.0 | 2026-10-07 | 支付回调落库闭环：① 线上 `pp_order` 新增 `pay_status`/`transaction_id`/`pay_time`/`order_status` 四字段；② 回调处理重写：验签 → 订单存在性 → 金额核验（分）→ 幂等落库（`WHERE pay_status=0`）→ 企微通知 → 应答，全分支正确应答（FAIL 触发微信重推）；③ 订单模型新增 `getOrderBySn`/`markOrderPaid` | 已用「合法签名假订单」正向测试（验签通过→订单不存在拒绝）与「篡改签名」反向测试（验签拒绝）验证，未污染生产数据；backlog #1 关闭 |
 | v1.6.0 | 2026-10-07 | 管理后台第一期：① 后端 `/admin-api`：JWT 登录（`adp_admin_user` + bcrypt + `last_login_at`）、概览统计、用户（列表/详情含授权记录与驾驶证）、车辆（CRUD，有关联订单拒删）、订单（列表筛选/详情/履约状态流转）；② 前端 `admin-web/`（Vue3+Vite+Element Plus+Pinia）：登录、概览、订单/车辆/用户三模块页面；③ 新增依赖 `jsonwebtoken`/`bcryptjs`；④ `.env` 新增 `ADMIN_JWT_SECRET`/`ADMIN_JWT_EXPIRES` | 管理端接口全部经本地签发 token 对线上库只读验证通过（47 用户/12 车辆/38 订单）；后台实际部署后端仍需上线；`admin-web` build 产物 362KB CSS + 1MB JS（gzip 350KB） |
 | v1.6.1 | 2026-10-07 | 部署配置补齐：① `ecosystem.config.cjs` 入库（PM2 应用 `pangpaicar`，日志 `logs/`）；② 需求文档部署一节重写（后端 PM2/管理后台 Nginx 静态托管/本地开发注意事项） | 无代码逻辑变化 |
+| v1.6.2 | 2026-10-11 | access_token 读取兜底：① `miniprogram.js` 新增 `getAccessTokenCached()`——缓存文件不存在（ENOENT）时自动调微信接口获取、自动创建 `TOKEN_DIR` 目录并落盘，`/getIdCardInfo` 与 `/getQrCode` 改用该方法；② `getAccessToken()` 增加返回值校验（微信报错时抛出明确异常而非返回 undefined）；③ token 刷新任务写入前自动建目录、企微 token 获取失败时不再把 `undefined` 写入文件 | 本地实测通过（删除 `src/data` 后调用，自动获取 137 位 token 并落盘）；backlog #11 |

@@ -17,7 +17,29 @@ const secret = config.wx.secret;
 async function getAccessToken() {
   const url = 'https://api.weixin.qq.com/cgi-bin/token?appid=' + appid + '&secret=' + secret + '&grant_type=client_credential';
   const res = await axios.get(url);
+  if (!res.data.access_token) {
+    throw new Error('微信 access_token 获取失败: ' + JSON.stringify(res.data));
+  }
   return res.data.access_token;
+}
+
+/**
+ * 读取缓存的 access_token，文件不存在时自动获取并落盘
+ * （主服务与 token 刷新任务为两个进程，新环境/本地未跑任务时缓存文件缺失，
+ *   直接 readFileSync 会抛 ENOENT 导致全局异常，此处兜底）
+ * @returns {string} access_token
+ */
+async function getAccessTokenCached() {
+  const tokenPath = path.join(config.tokenDir, 'wx_access_token.txt');
+  try {
+    return fs.readFileSync(tokenPath, 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+    const token = await getAccessToken();
+    fs.mkdirSync(config.tokenDir, { recursive: true });
+    fs.writeFileSync(tokenPath, token);
+    return token;
+  }
 }
 
 /**
@@ -37,7 +59,7 @@ async function getWxOpenid(js_code) {
  */
 async function getIdCardInfo(req, res) {
   const { img_url } = req.query;
-  const token = fs.readFileSync(path.join(config.tokenDir, 'wx_access_token.txt'), 'utf8');
+  const token = await getAccessTokenCached();
   const url = 'https://api.weixin.qq.com/cv/ocr/idcard?access_token=' + token + '&img_url=' + img_url;
   const response = await axios.post(url, { img_url: img_url });
   res.json(response.data);
@@ -50,7 +72,7 @@ async function getIdCardInfo(req, res) {
  * @returns axios response（arraybuffer）
  */
 async function getUnlimitedQRCode(scene, page) {
-  const token = fs.readFileSync(path.join(config.tokenDir, 'wx_access_token.txt'), 'utf8');
+  const token = await getAccessTokenCached();
   const url = 'https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token=' + token;
   const response = await axios.post(url, { scene: scene, page: page }, { responseType: 'arraybuffer' });
   return response;
@@ -61,6 +83,7 @@ async function getUnlimitedQRCode(scene, page) {
  */
 module.exports = {
   getAccessToken,
+  getAccessTokenCached,
   getWxOpenid,
   getIdCardInfo,
   getUnlimitedQRCode,
