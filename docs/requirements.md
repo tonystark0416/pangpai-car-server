@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.4 ｜ 日期：2026-10-11 ｜ 状态：迭代中
+> 版本：v1.6.5 ｜ 日期：2026-10-12 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -183,11 +183,13 @@ pangpai-car/
 | `/queryWxPayOrder` | GET | 微信支付查单（管理端用） |
 | `/applyRefund` | POST | 申请退款（管理端用，走 p12 证书） |
 
-### 2.5 定时任务（独立进程）
+### 2.5 定时任务
 
-| 脚本 | 频率 | 说明 |
-|---|---|---|
-| `tasks/refreshAccessToken.js`（`npm run task:token`） | 启动即刷新一次 + 每小时整点 | 刷新小程序 + 企业微信 access_token，写入 `TOKEN_DIR`（`src/data`）下 txt 供运行时读取 |
+| 脚本 | 运行方式 | 频率 | 说明 |
+|---|---|---|---|
+| `tasks/refreshAccessToken.js` | **PM2 应用 `pangpai-token`**（v1.6.5 起，`ecosystem.config.cjs` 托管；亦可 `npm run task:token` 临时跑） | 启动即刷新一次 + 每小时整点 | 刷新小程序 + 企业微信 access_token，写入 `TOKEN_DIR`（`src/data`）下 txt 供运行时读取 |
+
+**双保险机制（v1.6.5）**：① 定时任务负责常规小时级刷新；② 主服务读取侧兜底——`getAccessTokenCached()`（小程序）/ `getWorkTokenCached()`（企微）在缓存文件**缺失或超过 90 分钟未更新**（任务进程挂掉）时自动重取并落盘，微信 token 有效期 7200s，90 分钟阈值与小时级刷新留足余量。
 
 ---
 
@@ -213,9 +215,9 @@ pangpai-car/
 ### 4.1 后端（API 服务）
 
 - 服务器：宝塔环境（42.194.245.3），Node 只监听 HTTP 3002，HTTPS 由前置 Nginx 终结。
-- 启动：`pangpaicar_start.sh` → PM2 `ecosystem.config.cjs`（v1.6.1 起配置文件入库，应用名 `pangpaicar`，日志 `logs/`）。
+- 启动：`pangpaicar_start.sh` → PM2 `ecosystem.config.cjs`（v1.6.1 起配置文件入库；v1.6.5 起托管两个应用：主服务 `pangpaicar` + token 任务 `pangpai-token`，日志 `logs/`）。
 - 环境变量：服务器上维护 `.env`（含 DB / 微信 / 支付 / 企微 / JWT 密钥），模板见 `.env.example`。
-- 部署步骤：`git pull` → `npm install` → `pm2 restart pangpaicar`（首次 `pm2 start ecosystem.config.cjs`）。
+- 部署步骤：`git pull` → `npm install` → `pm2 restart pangpaicar pangpai-token`（首次 `pm2 start ecosystem.config.cjs` 一键拉起全部应用）。
 
 ### 4.2 管理后台（admin-web，v1.6.0 起）
 
@@ -254,6 +256,7 @@ pangpai-car/
 | 9 | 无统一响应模型与错误处理，无日志体系 | 中 | 部分改善（v1.1.0 增加全局异常中间件与 asyncHandler） |
 | 10 | 京东订单 5 秒轮询调试代码 | 低 | **v1.3.0 已随联盟业务删除** |
 | 11 | `src/data/wx_access_token.txt` 缓存不存在时接口直接 ENOENT（新环境/本地未跑 token 任务即触发） | 中 | **v1.6.2 已修复（读取兜底：自动获取 + 自动建目录落盘）** |
+| 12 | token 刷新任务未托管，终端退出即停，缓存过期（>2h）后 OCR/小程序码/企微通知报 40001 | 中 | **v1.6.5 已修复（任务入 PM2 `pangpai-token` + 读取侧 90 分钟新鲜度兜底双保险）** |
 
 ---
 
@@ -273,3 +276,4 @@ pangpai-car/
 | v1.6.2 | 2026-10-11 | access_token 读取兜底：① `miniprogram.js` 新增 `getAccessTokenCached()`——缓存文件不存在（ENOENT）时自动调微信接口获取、自动创建 `TOKEN_DIR` 目录并落盘，`/getIdCardInfo` 与 `/getQrCode` 改用该方法；② `getAccessToken()` 增加返回值校验（微信报错时抛出明确异常而非返回 undefined）；③ token 刷新任务写入前自动建目录、企微 token 获取失败时不再把 `undefined` 写入文件 | 本地实测通过（删除 `src/data` 后调用，自动获取 137 位 token 并落盘）；backlog #11 |
 | v1.6.3 | 2026-10-11 | 管理后台线上部署（方案B，`https://pangpai-car.com/admin`）：① vite `base: '/admin/'` + vue-router `createWebHistory('/admin/')`；② `app.js` 托管 `admin-web/dist`（静态目录 + SPA history 兜底，dist 不存在时仅打印提示不阻断启动）；③ 接口同域相对路径无需跨域/Nginx 配置 | 本地全链路验证通过：/admin/ 200、/admin/orders SPA 兜底 200、assets 200、/admin-api 未带 token 401；服务器需 build + pm2 restart 后生效 |
 | v1.6.4 | 2026-10-11 | 管理后台时间显示优化：① 新增 `admin-web/src/utils/format.js` 共享 `formatDateTime`（ISO/毫秒时间戳/Date → `YYYY-MM-DD HH:mm:ss` 东八区，空值与 0 显示 `-`）；② 订单列表创建时间、详情支付/取还车/创建时间，车辆列表更新时间，用户列表注册时间、详情注册/授权时间全部接入 | 实测 `2026-10-11T13:13:59.000Z` → `2026-10-11 21:13:59`；Orders 原局部 formatTs 一并收敛到共享工具 |
+| v1.6.5 | 2026-10-12 | access_token 更新机制双保险：① token 刷新任务纳入 PM2 托管（`ecosystem.config.cjs` 新增应用 `pangpai-token`，日志 `logs/token-*.log`）；② 读取侧新鲜度兜底——`getAccessTokenCached`/新增 `getWorkTokenCached` 在缓存文件缺失**或超过 90 分钟未刷新**时自动重取并落盘（原逻辑只兜底"文件不存在"，任务进程挂掉后过期 token 仍会报 40001） | 实测：将缓存 mtime 改为 2 小时前 → 自动重取 137 位新 token 并更新文件；微信 token 有效期 7200s，与小时级刷新任务余量充足 |

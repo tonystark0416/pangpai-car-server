@@ -24,17 +24,26 @@ async function getAccessToken() {
 }
 
 /**
- * 读取缓存的 access_token，文件不存在时自动获取并落盘
- * （主服务与 token 刷新任务为两个进程，新环境/本地未跑任务时缓存文件缺失，
- *   直接 readFileSync 会抛 ENOENT 导致全局异常，此处兜底）
+ * 读取缓存的 access_token，文件不存在或已过期时自动获取并落盘
+ * - 文件不存在（ENOENT）：新环境/本地未跑 token 任务
+ * - 文件超过 TOKEN_MAX_AGE 未更新：token 任务进程挂掉后的自愈
+ * （微信 token 有效期 7200s，此处 90 分钟视为过期，与小时级刷新任务留足余量）
  * @returns {string} access_token
  */
+const TOKEN_MAX_AGE_MS = 90 * 60 * 1000;
+
 async function getAccessTokenCached() {
   const tokenPath = path.join(config.tokenDir, 'wx_access_token.txt');
   try {
+    const stat = fs.statSync(tokenPath);
+    if (Date.now() - stat.mtimeMs > TOKEN_MAX_AGE_MS) {
+      const err = new Error('access_token 缓存已过期，重新获取');
+      err.code = 'STALE';
+      throw err;
+    }
     return fs.readFileSync(tokenPath, 'utf8');
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
+    if (err.code !== 'ENOENT' && err.code !== 'STALE') throw err;
     const token = await getAccessToken();
     fs.mkdirSync(config.tokenDir, { recursive: true });
     fs.writeFileSync(tokenPath, token);

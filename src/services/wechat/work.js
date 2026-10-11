@@ -24,12 +24,41 @@ async function getWorkWeixinToken() {
 }
 
 /**
+ * 读取缓存的企业微信 access_token，文件不存在或超过 90 分钟未刷新时自动重取
+ * （与 miniprogram.getAccessTokenCached 同一套兜底策略）
+ * @returns {string} access_token
+ */
+const TOKEN_MAX_AGE_MS = 90 * 60 * 1000;
+
+async function getWorkTokenCached() {
+  const tokenPath = path.join(config.tokenDir, 'work_access_token.txt');
+  try {
+    const stat = fs.statSync(tokenPath);
+    if (Date.now() - stat.mtimeMs > TOKEN_MAX_AGE_MS) {
+      const err = new Error('企业微信 access_token 缓存已过期，重新获取');
+      err.code = 'STALE';
+      throw err;
+    }
+    return fs.readFileSync(tokenPath, 'utf8');
+  } catch (err) {
+    if (err.code !== 'ENOENT' && err.code !== 'STALE') throw err;
+    const res = await getWorkWeixinToken();
+    if (res.code !== 0 || !res.token) {
+      throw new Error('企业微信 access_token 获取失败: ' + JSON.stringify(res));
+    }
+    fs.mkdirSync(config.tokenDir, { recursive: true });
+    fs.writeFileSync(tokenPath, res.token);
+    return res.token;
+  }
+}
+
+/**
  * 获取企业成员信息接口
  * @param {*} userid
  * @returns
  */
 async function getWorkUserInfo(userid) {
-  const token = fs.readFileSync(path.join(config.tokenDir, 'work_access_token.txt'), 'utf8');
+  const token = await getWorkTokenCached();
   const url = 'https://qyapi.weixin.qq.com/cgi-bin/user/get?access_token=' + token + '&userid=' + userid;
   const res = await axios.get(url);
   if (res.data.errcode === 0) {
@@ -60,7 +89,7 @@ async function workSendMsgMiniProgram(touser, appid, page, title, description, c
       content_item: content_item,
     },
   };
-  const token = fs.readFileSync(path.join(config.tokenDir, 'work_access_token.txt'), 'utf8');
+  const token = await getWorkTokenCached();
   const url = 'https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=' + token;
   const res = await axios.post(url, data);
   console.log(res.data);
@@ -71,6 +100,7 @@ async function workSendMsgMiniProgram(touser, appid, page, title, description, c
  */
 module.exports = {
   getWorkWeixinToken,
+  getWorkTokenCached,
   getWorkUserInfo,
   workSendMsgMiniProgram,
 };
