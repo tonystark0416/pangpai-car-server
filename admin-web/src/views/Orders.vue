@@ -46,7 +46,9 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="create_time" label="创建时间" width="170" />
+        <el-table-column label="创建时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.create_time) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
@@ -84,13 +86,13 @@
           <el-tag :type="payStatusType(detail.pay_status)" size="small">{{ payStatusText(detail.pay_status) }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="微信支付单号">{{ detail.transaction_id || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="支付时间">{{ detail.pay_time || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="支付时间">{{ formatDateTime(detail.pay_time) }}</el-descriptions-item>
         <el-descriptions-item label="履约状态">
           <el-tag :type="orderStatusType(detail.order_status)" size="small">{{ orderStatusText(detail.order_status) }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="取车">{{ detail.pickup_address }}（{{ formatTs(detail.pickup_time) }}）</el-descriptions-item>
-        <el-descriptions-item label="还车">{{ detail.return_address }}（{{ formatTs(detail.return_time) }}）</el-descriptions-item>
-        <el-descriptions-item label="创建时间">{{ detail.create_time }}</el-descriptions-item>
+        <el-descriptions-item label="取车">{{ detail.pickup_address }}（{{ formatDateTime(detail.pickup_time) }}）</el-descriptions-item>
+        <el-descriptions-item label="还车">{{ detail.return_address }}（{{ formatDateTime(detail.return_time) }}）</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ formatDateTime(detail.create_time) }}</el-descriptions-item>
       </el-descriptions>
     </el-drawer>
 
@@ -112,6 +114,7 @@ import { onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import api from '../api';
 import { PAY_STATUS, ORDER_STATUS, payStatusText, payStatusType, orderStatusText, orderStatusType } from '../constants';
+import { formatDateTime } from '../utils/format';
 
 const loading = ref(false);
 const rows = ref([]);
@@ -123,13 +126,6 @@ const detail = ref(null);
 
 const statusVisible = ref(false);
 const statusForm = reactive({ id: null, order_status: 0 });
-
-function formatTs(ts) {
-  if (!ts) return '-';
-  const d = new Date(Number(ts));
-  if (Number.isNaN(d.getTime())) return ts;
-  return d.toLocaleString('zh-CN', { hour12: false });
-}
 
 async function load() {
   loading.value = true;

@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.3 ｜ 日期：2026-10-11 ｜ 状态：迭代中
+> 版本：v1.6.4 ｜ 日期：2026-10-11 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -172,7 +172,7 @@ pangpai-car/
 | `/admin-api/orders/:id` | GET | 订单详情（含车辆与下单用户信息） |
 | `/admin-api/orders/:id/status` | PUT | 订单履约状态流转（待取车→已取车→已还车→已完成/已取消） |
 
-管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 可由 Nginx 或 Express 静态托管。
+管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）。列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
 
 #### 既有运营接口
 
@@ -272,3 +272,4 @@ pangpai-car/
 | v1.6.1 | 2026-10-07 | 部署配置补齐：① `ecosystem.config.cjs` 入库（PM2 应用 `pangpaicar`，日志 `logs/`）；② 需求文档部署一节重写（后端 PM2/管理后台 Nginx 静态托管/本地开发注意事项） | 无代码逻辑变化 |
 | v1.6.2 | 2026-10-11 | access_token 读取兜底：① `miniprogram.js` 新增 `getAccessTokenCached()`——缓存文件不存在（ENOENT）时自动调微信接口获取、自动创建 `TOKEN_DIR` 目录并落盘，`/getIdCardInfo` 与 `/getQrCode` 改用该方法；② `getAccessToken()` 增加返回值校验（微信报错时抛出明确异常而非返回 undefined）；③ token 刷新任务写入前自动建目录、企微 token 获取失败时不再把 `undefined` 写入文件 | 本地实测通过（删除 `src/data` 后调用，自动获取 137 位 token 并落盘）；backlog #11 |
 | v1.6.3 | 2026-10-11 | 管理后台线上部署（方案B，`https://pangpai-car.com/admin`）：① vite `base: '/admin/'` + vue-router `createWebHistory('/admin/')`；② `app.js` 托管 `admin-web/dist`（静态目录 + SPA history 兜底，dist 不存在时仅打印提示不阻断启动）；③ 接口同域相对路径无需跨域/Nginx 配置 | 本地全链路验证通过：/admin/ 200、/admin/orders SPA 兜底 200、assets 200、/admin-api 未带 token 401；服务器需 build + pm2 restart 后生效 |
+| v1.6.4 | 2026-10-11 | 管理后台时间显示优化：① 新增 `admin-web/src/utils/format.js` 共享 `formatDateTime`（ISO/毫秒时间戳/Date → `YYYY-MM-DD HH:mm:ss` 东八区，空值与 0 显示 `-`）；② 订单列表创建时间、详情支付/取还车/创建时间，车辆列表更新时间，用户列表注册时间、详情注册/授权时间全部接入 | 实测 `2026-10-11T13:13:59.000Z` → `2026-10-11 21:13:59`；Orders 原局部 formatTs 一并收敛到共享工具 |

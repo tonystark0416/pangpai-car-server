@@ -21,7 +21,9 @@
           </template>
         </el-table-column>
         <el-table-column prop="order_count" label="订单数" width="90" />
-        <el-table-column prop="create_time" label="注册时间" width="170" />
+        <el-table-column label="注册时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.create_time) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDetail(row)">详情</el-button>
@@ -40,7 +42,7 @@
           <el-descriptions-item label="用户ID">{{ detail.user.id }}</el-descriptions-item>
           <el-descriptions-item label="昵称">{{ detail.user.nickname || '-' }}</el-descriptions-item>
           <el-descriptions-item label="手机号">{{ detail.user.phone || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="注册时间">{{ detail.user.create_time }}</el-descriptions-item>
+          <el-descriptions-item label="注册时间">{{ formatDateTime(detail.user.create_time) }}</el-descriptions-item>
           <el-descriptions-item label="驾驶证">
             <template v-if="detail.driver">
               {{ detail.driver.driver_idcard_name }} / {{ detail.driver.driver_idcard_number }}
@@ -55,7 +57,9 @@
             <template #default="{ row }">{{ bizName(row.biz_code) }}</template>
           </el-table-column>
           <el-table-column prop="openid" label="openid" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="create_time" label="授权时间" width="170" />
+          <el-table-column label="授权时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.create_time) }}</template>
+          </el-table-column>
         </el-table>
 
         <h4>最近订单</h4>
@@ -82,6 +86,7 @@
 import { onMounted, reactive, ref } from 'vue';
 import api from '../api';
 import { BIZ_NAMES, payStatusText, payStatusType, orderStatusText } from '../constants';
+import { formatDateTime } from '../utils/format';
 
 const loading = ref(false);
 const rows = ref([]);

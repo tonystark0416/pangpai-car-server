@@ -25,7 +25,9 @@
             <span :class="{ promo: row.promotion_day_price }">￥{{ row.promotion_day_price ?? '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="update_time" label="更新时间" width="170" />
+        <el-table-column label="更新时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.update_time) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openForm(row)">编辑</el-button>
@@ -69,6 +71,7 @@
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '../api';
+import { formatDateTime } from '../utils/format';
 
 const loading = ref(false);
 const saving = ref(false);
