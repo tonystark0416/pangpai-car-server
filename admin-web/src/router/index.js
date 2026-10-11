@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import AdminLayout from '../layout/AdminLayout.vue';
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory('/admin/'),
   routes: [
     { path: '/login', component: () => import('../views/Login.vue'), meta: { public: true } },
     {

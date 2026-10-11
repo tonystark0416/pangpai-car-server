@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.2 ｜ 日期：2026-10-11 ｜ 状态：迭代中
+> 版本：v1.6.3 ｜ 日期：2026-10-11 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -220,7 +220,12 @@ pangpai-car/
 ### 4.2 管理后台（admin-web，v1.6.0 起）
 
 - 开发：`admin-web/` 下 `npm install && npm run dev`（vite 代理 `/admin-api`、`/images` 至 `127.0.0.1:3002`）。
-- 生产构建：`npm run build` 产出 `admin-web/dist/`，由 Nginx 静态托管（建议独立域名/端口或路径前缀，并做访问控制）。
+- 生产部署（v1.6.3 起为**方案B：主域名路径托管**，线上地址 `https://pangpai-car.com/admin`）：
+  1. vite `base` 与 vue-router `createWebHistory` 均设为 `/admin/`（已入库）；
+  2. 服务器上 `admin-web/` 执行 `npm install && npm run build` 产出 `dist/`（dist 不入库，必须在服务器构建）；
+  3. Express（`app.js`）自动托管：存在 `admin-web/dist` 时挂载 `/admin` 静态目录 + SPA history 兜底，无需任何 Nginx 改动（整域已反代 3002）；接口走同域相对路径 `/admin-api`，无跨域问题。
+- 升级后台只需重新 build + `pm2 restart pangpaicar`。
+- ⚠️ 待办：后台目前仅 JWT 登录，无 IP 白名单/频控，建议后续加 Nginx 访问控制。
 
 ### 4.3 本地开发
 
@@ -266,3 +271,4 @@ pangpai-car/
 | v1.6.0 | 2026-10-07 | 管理后台第一期：① 后端 `/admin-api`：JWT 登录（`adp_admin_user` + bcrypt + `last_login_at`）、概览统计、用户（列表/详情含授权记录与驾驶证）、车辆（CRUD，有关联订单拒删）、订单（列表筛选/详情/履约状态流转）；② 前端 `admin-web/`（Vue3+Vite+Element Plus+Pinia）：登录、概览、订单/车辆/用户三模块页面；③ 新增依赖 `jsonwebtoken`/`bcryptjs`；④ `.env` 新增 `ADMIN_JWT_SECRET`/`ADMIN_JWT_EXPIRES` | 管理端接口全部经本地签发 token 对线上库只读验证通过（47 用户/12 车辆/38 订单）；后台实际部署后端仍需上线；`admin-web` build 产物 362KB CSS + 1MB JS（gzip 350KB） |
 | v1.6.1 | 2026-10-07 | 部署配置补齐：① `ecosystem.config.cjs` 入库（PM2 应用 `pangpaicar`，日志 `logs/`）；② 需求文档部署一节重写（后端 PM2/管理后台 Nginx 静态托管/本地开发注意事项） | 无代码逻辑变化 |
 | v1.6.2 | 2026-10-11 | access_token 读取兜底：① `miniprogram.js` 新增 `getAccessTokenCached()`——缓存文件不存在（ENOENT）时自动调微信接口获取、自动创建 `TOKEN_DIR` 目录并落盘，`/getIdCardInfo` 与 `/getQrCode` 改用该方法；② `getAccessToken()` 增加返回值校验（微信报错时抛出明确异常而非返回 undefined）；③ token 刷新任务写入前自动建目录、企微 token 获取失败时不再把 `undefined` 写入文件 | 本地实测通过（删除 `src/data` 后调用，自动获取 137 位 token 并落盘）；backlog #11 |
+| v1.6.3 | 2026-10-11 | 管理后台线上部署（方案B，`https://pangpai-car.com/admin`）：① vite `base: '/admin/'` + vue-router `createWebHistory('/admin/')`；② `app.js` 托管 `admin-web/dist`（静态目录 + SPA history 兜底，dist 不存在时仅打印提示不阻断启动）；③ 接口同域相对路径无需跨域/Nginx 配置 | 本地全链路验证通过：/admin/ 200、/admin/orders SPA 兜底 200、assets 200、/admin-api 未带 token 401；服务器需 build + pm2 restart 后生效 |

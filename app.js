@@ -2,6 +2,8 @@
  * 庞派汽车小程序后端服务（Express）
  */
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const config = require('./src/config');
 const routes = require('./src/routes');
 
@@ -16,6 +18,18 @@ app.use('/images', express.static(config.upload.dir, {
   maxAge: '1h',
   fallthrough: false,
 }));
+
+// 管理后台前端托管（方案B：https://pangpai-car.com/admin -> admin-web/dist）
+const adminDist = path.join(config.root, 'admin-web/dist');
+if (fs.existsSync(adminDist)) {
+  app.use('/admin', express.static(adminDist, { maxAge: '1d' }));
+  // SPA history 路由兜底：/admin 任意子路径回退 index.html
+  app.get(/^\/admin(\/.*)?$/, (req, res) => {
+    res.sendFile(path.join(adminDist, 'index.html'));
+  });
+} else {
+  console.log('[admin] 未找到 admin-web/dist，管理后台未托管（在 admin-web 下执行 npm run build 后重启生效）');
+}
 
 // 业务路由
 app.use(routes);

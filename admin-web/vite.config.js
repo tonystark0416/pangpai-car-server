@@ -3,6 +3,8 @@ import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
   plugins: [vue()],
+  // 方案B：挂在主域名 /admin 路径下，静态资源前缀需与之一致
+  base: '/admin/',
   server: {
     host: '127.0.0.1',
     port: 5173,
