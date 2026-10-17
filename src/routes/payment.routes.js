@@ -19,4 +19,7 @@ router.get('/queryWxPayOrder', asyncHandler(paymentController.queryOrder));
 // 申请退款（管理端）
 router.post('/applyRefund', asyncHandler(paymentController.applyRefund));
 
+// 小程序端：取消订单并退款（v1.6.11，校验订单状态，仅未取车可退）
+router.post('/cancelRefund', asyncHandler(paymentController.cancelRefund));
+
 module.exports = router;

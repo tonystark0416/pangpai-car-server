@@ -5,6 +5,7 @@ const WechatPayV2 = require('../services/wechat/pay');
 const config = require('../config');
 const work = require('../services/wechat/work');
 const orderModel = require('../models/order.model');
+const refundService = require('../services/refund.service');
 
 const wechatPay = new WechatPayV2(config.wxPay);
 
@@ -199,6 +200,50 @@ class PaymentController {
         success: false,
         message: error.message,
       });
+    }
+  }
+
+  /**
+   * 小程序端：取消订单并退款（v1.6.11）
+   * @method POST body/query: { orderSn, uid }
+   *
+   * 与后台退款的区别：**校验订单状态**——仅「已支付 + 未取车」的订单可退
+   * 退款成功后 pay_status=2（已退款）、order_status=4（已取消）
+   */
+  async cancelRefund(req, res) {
+    const { orderSn, uid } = { ...req.query, ...(req.body || {}) };
+    if (!orderSn || !uid) {
+      return res.json({ code: 400, msg: '缺少参数：orderSn 或 uid' });
+    }
+
+    const order = await orderModel.getOrderBySn(orderSn);
+    if (!order) {
+      return res.json({ code: 404, msg: '订单不存在' });
+    }
+    if (Number(order.uid) !== Number(uid)) {
+      return res.json({ code: 403, msg: '无权操作该订单' });
+    }
+    // 状态口径先行校验（可读错误优先于微信侧报错）
+    if (Number(order.pay_status) !== 1) {
+      const msg =
+        Number(order.pay_status) === 0
+          ? '订单未支付，无需退款'
+          : Number(order.pay_status) === 2
+          ? '订单已退款'
+          : '订单支付状态异常，请联系客服';
+      return res.json({ code: 400, msg });
+    }
+    if (Number(order.order_status) !== 0) {
+      return res.json({ code: 400, msg: '订单已取车，无法取消退款，请联系客服' });
+    }
+
+    try {
+      const result = await refundService.refundOrder(order, { refundDesc: '用户取消订单' });
+      console.log('[refund] 用户退款成功:', orderSn, '金额', result.refundFee);
+      res.json({ code: 200, msg: `退款成功，已退 ￥${result.refundFee}`, result: { refund_fee: result.refundFee } });
+    } catch (error) {
+      console.error('[refund] 用户退款失败:', orderSn, error.message);
+      res.json({ code: 500, msg: `退款失败：${error.message}` });
     }
   }
 

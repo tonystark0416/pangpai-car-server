@@ -148,10 +148,31 @@ async function markOrderPaid(order_sn, transaction_id, timeEnd) {
     }
 }
 
+/**
+ * 标记订单已退款（退款成功后落库）
+ * v1.6.11：pay_status=2（已退款）+ order_status=4（已取消）
+ * @param {string} order_sn 商户订单号
+ * @returns affectedRows：1=落库成功；0=订单不存在
+ */
+async function markOrderRefunded(order_sn) {
+    const db = new MySQL();
+    const sqlMarkRefunded = 'UPDATE pp_order SET pay_status = 2, order_status = 4 WHERE order_sn = ?';
+    try {
+        const res = await db.query(sqlMarkRefunded, [order_sn]);
+        return res.affectedRows;
+    } catch (error) {
+        console.error('[order] markOrderRefunded error:', error);
+        return -1;
+    } finally {
+        db.close();
+    }
+}
+
 module.exports = {
     createOrder,
     getOrderDetail,
     getOrderList,
     getOrderBySn,
     markOrderPaid,
+    markOrderRefunded,
 };

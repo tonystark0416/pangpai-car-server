@@ -120,6 +120,9 @@
       </el-descriptions>
         <div class="detail-actions">
           <el-button type="primary" plain @click="openAddress(detail)">修改取车/还车地址</el-button>
+          <el-button type="danger" plain :disabled="detail.pay_status != 1" @click="openRefund(detail)">
+            退款
+          </el-button>
         </div>
       </div>
     </el-drawer>
@@ -137,6 +140,27 @@
       <template #footer>
         <el-button @click="addressVisible = false">取消</el-button>
         <el-button type="primary" :loading="addressSaving" @click="submitAddress">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 退款 -->
+    <el-dialog v-model="refundVisible" title="订单退款" width="420px">
+      <el-alert type="warning" :closable="false" show-icon
+        title="退款成功后订单将变为「已退款 / 已取消」，不可撤销" style="margin-bottom: 16px" />
+      <el-form label-width="90px">
+        <el-form-item label="订单号">{{ refundForm.order_sn }}</el-form-item>
+        <el-form-item label="实付金额">￥{{ refundForm.total_price }}</el-form-item>
+        <el-form-item label="退款金额">
+          <el-input-number v-model="refundForm.refund_fee" :min="0.01" :max="Number(refundForm.total_price)"
+            :precision="2" :step="1" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="退款原因">
+          <el-input v-model="refundForm.refund_desc" maxlength="50" placeholder="选填，如：用户取消订单" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="refundVisible = false">取消</el-button>
+        <el-button type="danger" :loading="refundSaving" @click="submitRefund">确认退款</el-button>
       </template>
     </el-dialog>
 
@@ -175,6 +199,10 @@ const addressVisible = ref(false);
 const addressSaving = ref(false);
 const addressForm = reactive({ id: null, pickup_address: '', return_address: '' });
 
+const refundVisible = ref(false);
+const refundSaving = ref(false);
+const refundForm = reactive({ id: null, order_sn: '', total_price: 0, refund_fee: 0, refund_desc: '' });
+
 async function load() {
   loading.value = true;
   try {
@@ -202,6 +230,32 @@ function openAddress(row) {
   addressForm.pickup_address = row.pickup_address || '';
   addressForm.return_address = row.return_address || '';
   addressVisible.value = true;
+}
+
+function openRefund(row) {
+  refundForm.id = row.id;
+  refundForm.order_sn = row.order_sn;
+  refundForm.total_price = Number(row.total_price);
+  refundForm.refund_fee = Number(row.total_price);
+  refundForm.refund_desc = '';
+  refundVisible.value = true;
+}
+
+async function submitRefund() {
+  refundSaving.value = true;
+  try {
+    const data = await api.post(`/orders/${refundForm.id}/refund`, {
+      refund_fee: refundForm.refund_fee,
+      refund_desc: refundForm.refund_desc || '后台操作退款',
+    });
+    // 响应拦截器已返回 data 部分（含 refund_fee、wx_refund_id）
+    ElMessage.success(`退款成功，已退 ￥${data.refund_fee}`);
+    refundVisible.value = false;
+    if (detail.value) detail.value = { ...detail.value, pay_status: 2, order_status: 4 };
+    load();
+  } finally {
+    refundSaving.value = false;
+  }
 }
 
 async function submitAddress() {

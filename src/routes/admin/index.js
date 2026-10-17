@@ -38,5 +38,6 @@ router.get('/orders', asyncHandler(order.list));
 router.get('/orders/:id', asyncHandler(order.detail));
 router.put('/orders/:id/status', asyncHandler(order.updateStatus));
 router.put('/orders/:id/address', asyncHandler(order.updateAddress));
+router.post('/orders/:id/refund', asyncHandler(order.refund));
 
 module.exports = router;

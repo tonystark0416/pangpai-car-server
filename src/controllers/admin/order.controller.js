@@ -2,6 +2,7 @@
  * 管理后台：订单管理 + 概览统计
  */
 const adminModel = require('../../models/admin.model');
+const refundService = require('../../services/refund.service');
 
 // 履约状态合法值
 const ORDER_STATUS = [0, 1, 2, 3, 4];
@@ -68,9 +69,35 @@ async function updateAddress(req, res) {
   res.json({ code: 0, msg: '地址已更新' });
 }
 
+/**
+ * 后台发起退款（v1.6.11）
+ * 按需求：后台操作**不做任何订单状态校验**（前端自行判断），直接调微信退款；
+ * 退款成功后 pay_status=2（已退款）、order_status=4（已取消）
+ * body: { refund_desc?, refund_fee? }  // refund_fee 单位：元，缺省全额
+ */
+async function refund(req, res) {
+  const { refund_desc, refund_fee } = req.body || {};
+  const order = await adminModel.getOrderDetail(req.params.id);
+  if (!order) {
+    return res.json({ code: 404, msg: '订单不存在' });
+  }
+  try {
+    const result = await refundService.refundOrder(order, { refundDesc: refund_desc, refundFee: refund_fee });
+    console.log('[admin-refund] 退款成功:', order.order_sn, '金额', result.refundFee, '操作员', req.admin && req.admin.username);
+    res.json({
+      code: 0,
+      msg: `退款成功，已退 ￥${result.refundFee}`,
+      data: { refund_fee: result.refundFee, wx_refund_id: result.wxResult.refund_id },
+    });
+  } catch (error) {
+    console.error('[admin-refund] 退款失败:', order.order_sn, error.message);
+    res.json({ code: 500, msg: `退款失败：${error.message}` });
+  }
+}
+
 async function stats(req, res) {
   const data = await adminModel.getDashboardStats();
   res.json({ code: 0, data });
 }
 
-module.exports = { list, detail, updateStatus, updateAddress, stats };
+module.exports = { list, detail, updateStatus, updateAddress, refund, stats };

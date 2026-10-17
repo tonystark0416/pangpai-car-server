@@ -195,7 +195,7 @@ class WechatPayV2 {
      */
     getAppParams(prepayId) {
         const params = {
-            appid: this.config.appId,
+            appid: this.config.appid,
             partnerid: this.config.mchId,
             prepayid: prepayId,
             package: 'Sign=WXPay',
@@ -214,7 +214,7 @@ class WechatPayV2 {
         const { transactionId, outTradeNo } = queryData;
 
         const params = {
-            appid: this.config.appId,
+            appid: this.config.appid,
             mch_id: this.config.mchId,
             nonce_str: this.generateNonceStr(),
             ...(transactionId && { transaction_id: transactionId }),
@@ -232,7 +232,7 @@ class WechatPayV2 {
      */
     async closeOrder(outTradeNo) {
         const params = {
-            appid: this.config.appId,
+            appid: this.config.appid,
             mch_id: this.config.mchId,
             out_trade_no: outTradeNo,
             nonce_str: this.generateNonceStr()
@@ -252,13 +252,21 @@ class WechatPayV2 {
             transactionId,
             outTradeNo,
             outRefundNo,
-            totalFee,
-            refundFee,
+            totalFee,       // 单位：分
+            refundFee,      // 单位：分
             refundDesc
         } = refundData;
 
+        // v1.6.11 修复：原误用 config.appId（不存在，签名为空导致参数缺失）
+        // 且退款必须走证书双向认证，缺证书时给出明确错误而非静默失败
+        if (!this.config.pfx) {
+            throw new Error(
+                `缺少微信支付退款证书（p12），请将 apiclient_cert.p12 放到 ${this.config.pfxPath} 或在 .env 配置 WX_PFX_PATH`
+            );
+        }
+
         const params = {
-            appid: this.config.appId,
+            appid: this.config.appid,
             mch_id: this.config.mchId,
             nonce_str: this.generateNonceStr(),
             ...(transactionId && { transaction_id: transactionId }),
@@ -266,14 +274,23 @@ class WechatPayV2 {
             out_refund_no: outRefundNo,
             total_fee: parseInt(totalFee),
             refund_fee: parseInt(refundFee),
-            ...(refundDesc && { refund_desc: refundDesc })
+            ...(refundDesc && { refund_desc: refundDesc }),
+            ...(this.config.refundNotifyUrl && { notify_url: this.config.refundNotifyUrl }),
         };
 
-        return await this.request(
+        const result = await this.request(
             'https://api.mch.weixin.qq.com/secapi/pay/refund',
             params,
             true // 需要证书
         );
+
+        if (result.return_code === 'FAIL') {
+            throw new Error(result.return_msg);
+        }
+        if (result.result_code === 'FAIL') {
+            throw new Error(`${result.err_code}: ${result.err_code_des}`);
+        }
+        return result;
     }
 }
 
