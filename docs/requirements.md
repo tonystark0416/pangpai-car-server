@@ -152,7 +152,7 @@ pangpai-car/
 | `/wxPayCallback` | POST | 微信支付异步回调（XML + MD5 验签） |
 | `/queryWxPayOrder` | GET | 微信支付查单（v1.1.0 新挂载，管理端用） |
 | `/cancelRefund` | POST | **小程序端退款**：body/query `{orderSn, uid}`，**校验状态：仅「已支付 + 未取车」可退**（v1.6.11） |
-| ~~`/applyRefund`~~ | POST | **已废弃（v1.6.11）**：微信退款 API 裸透传，不校验状态且退款后不改订单状态。管理端改用独立接口 `/admin-api/orders/:id/refund`，小程序端改用 `/cancelRefund`。保留仅作兼容，禁止新接入 |
+| ~~`/applyRefund`~~ | POST | **已删除（v1.6.11）**：原为微信退款 API 裸透传，不校验状态且退款后不改订单状态。管理端用 `/admin-api/orders/:id/refund`，小程序端用 `/cancelRefund` |
 
 **退款流程（v1.6.11 起闭环）**：
 
@@ -221,7 +221,7 @@ pangpai-car/
 | `/getQrCode` | GET | 生成不限量小程序码（scene + page），以 image/png 二进制返回，用于地推/渠道投放 |
 | `/workWeixinCallback` | GET | 企业微信回调 URL 验证（仅 echostr 验证，无业务处理） |
 | `/queryWxPayOrder` | GET | 微信支付查单（管理端用） |
-| ~~`/applyRefund`~~ | POST | **已废弃（v1.6.11）**：裸透传微信退款，不改订单状态；管理端一律用下方 `/admin-api/orders/:id/refund` |
+| ~~`/applyRefund`~~ | POST | **已删除（v1.6.11）**：裸透传微信退款且不改订单状态；管理端一律用下方 `/admin-api/orders/:id/refund` |
 
 ### 2.5 定时任务
 

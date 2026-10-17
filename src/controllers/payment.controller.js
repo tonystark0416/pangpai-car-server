@@ -247,40 +247,9 @@ class PaymentController {
     }
   }
 
-  /**
-   * 申请退款
-   * @deprecated v1.6.11 起废弃：仅作微信退款 API 裸透传，不校验订单状态且
-   *   **退款后不会更新订单 pay_status / order_status**（会出现钱退了订单仍显示已支付）
-   *   - 管理端请用 `POST /admin-api/orders/:id/refund`
-   *   - 小程序端请用 `POST /cancelRefund`
-   *   此接口保留仅为兼容历史调用方，禁止新接入，后续确认无调用后可安全删除。
-   * @method POST body: { outTradeNo, outRefundNo, totalFee, refundFee, refundDesc }
-   */
-  async applyRefund(req, res) {
-    console.warn('[deprecated] /applyRefund 被调用，请改用 /cancelRefund（小程序端）或 /admin-api/orders/:id/refund（管理端）');
-    try {
-      const { outTradeNo, outRefundNo, totalFee, refundFee, refundDesc } = req.body;
-
-      const result = await wechatPay.refund({
-        outTradeNo,
-        outRefundNo,
-        totalFee,
-        refundFee,
-        refundDesc,
-      });
-
-      res.json({
-        success: true,
-        data: result,
-      });
-    } catch (error) {
-      console.error('申请退款失败:', error);
-      res.json({
-        success: false,
-        message: error.message,
-      });
-    }
-  }
+  // v1.6.11 已删除原 applyRefund（微信退款裸透传，不校验状态且退款后不改订单状态，存在资金与状态不一致风险）。
+  // 退款统一入口：小程序端 POST /cancelRefund、管理端 POST /admin-api/orders/:id/refund。
+  // 若后续发现确有调用方，重新编写时应复用 src/services/refund.service.js 以保证「退款成功才落库」的口径一致。
 }
 
 module.exports = new PaymentController();
