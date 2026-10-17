@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.5 ｜ 日期：2026-10-12 ｜ 状态：迭代中
+> 版本：v1.6.6 ｜ 日期：2026-10-17 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -200,7 +200,7 @@ pangpai-car/
 | 表名 | 用途 | 字段 |
 |---|---|---|
 | `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time |
-| `pp_order` | 租车订单 | id, order_sn(50), uid, contact_phone(20), car_id, rent_day(**varchar(5)**), rent_day_price, rent_total_price, server_day_price/server_total_price（保险）, driver_price/driver_total_price, total_price, **pay_status（0待支付 1已支付 2已退款 3支付失败，v1.5.0）**, **transaction_id（微信支付单号）**, **pay_time**, **order_status（履约：0待取车 1已取车 2已还车 3已完成 4已取消，v1.5.0）**, pickup_address(100), return_address(100), pickup_time/return_time(**varchar(50)，毫秒时间戳字符串**), create_time, update_time |
+| `pp_order` | 租车订单 | 全部 23 字段均已加中文注释（v1.6.6）：id=订单ID, order_sn=订单号（PP+yyyyMMddHHmmss）, uid=下单用户ID（adp_user.id）, contact_phone=联系电话, car_id=车辆ID（pp_car.id）, rent_day=租车天数（**varchar(5)**）, rent_day_price=车辆日租金单价, rent_total_price=车辆租金合计, server_day_price=保险费单价（每天）, server_total_price=保险费合计, driver_price=司机服务费单价（每天）, driver_total_price=司机服务费合计, total_price=订单总价, **pay_status=支付状态 0待支付 1已支付 2已退款 3支付失败（v1.5.0）**, **transaction_id=微信支付单号**, **pay_time=支付时间**, **order_status=履约状态 0待取车 1已取车 2已还车 3已完成 4已取消（v1.5.0）**, create_time=创建时间, update_time=更新时间, pickup_address=取车地址(100), return_address=还车地址(100), pickup_time=取车时间（**varchar(50)，毫秒时间戳字符串**）, return_time=还车时间 |
 | `adp_user` | 多业务线统一用户 | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), openid(50)（存量字段，新用户不再写入）, phone(20), create_time, update_time |
 | `adp_user_auth` | 用户授权表（v1.4.0，一个小程序一行） | id, user_id, biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 (biz_code, openid) |
 | `pp_driver` | 驾驶证信息 | id, user_id, driver_idcard_name(10), driver_idcard_number(50), driver_idcard_url(200), driver_idcard_birth(20), create_time, update_time |
@@ -277,3 +277,4 @@ pangpai-car/
 | v1.6.3 | 2026-10-11 | 管理后台线上部署（方案B，`https://pangpai-car.com/admin`）：① vite `base: '/admin/'` + vue-router `createWebHistory('/admin/')`；② `app.js` 托管 `admin-web/dist`（静态目录 + SPA history 兜底，dist 不存在时仅打印提示不阻断启动）；③ 接口同域相对路径无需跨域/Nginx 配置 | 本地全链路验证通过：/admin/ 200、/admin/orders SPA 兜底 200、assets 200、/admin-api 未带 token 401；服务器需 build + pm2 restart 后生效 |
 | v1.6.4 | 2026-10-11 | 管理后台时间显示优化：① 新增 `admin-web/src/utils/format.js` 共享 `formatDateTime`（ISO/毫秒时间戳/Date → `YYYY-MM-DD HH:mm:ss` 东八区，空值与 0 显示 `-`）；② 订单列表创建时间、详情支付/取还车/创建时间，车辆列表更新时间，用户列表注册时间、详情注册/授权时间全部接入 | 实测 `2026-10-11T13:13:59.000Z` → `2026-10-11 21:13:59`；Orders 原局部 formatTs 一并收敛到共享工具 |
 | v1.6.5 | 2026-10-12 | access_token 更新机制双保险：① token 刷新任务纳入 PM2 托管（`ecosystem.config.cjs` 新增应用 `pangpai-token`，日志 `logs/token-*.log`）；② 读取侧新鲜度兜底——`getAccessTokenCached`/新增 `getWorkTokenCached` 在缓存文件缺失**或超过 90 分钟未刷新**时自动重取并落盘（原逻辑只兜底"文件不存在"，任务进程挂掉后过期 token 仍会报 40001） | 实测：将缓存 mtime 改为 2 小时前 → 自动重取 137 位新 token 并更新文件；微信 token 有效期 7200s，与小时级刷新任务余量充足 |
+| v1.6.6 | 2026-10-17 | 线上 `pp_order` 字段注释修正与补齐：① 修复 v1.5.0 所加注释的编码乱码（当时执行 ALTER 的连接字符集不正确，中文被错误编码写入）；② 23 个字段全部补上中文注释（含枚举含义）；③ `scripts/local-dev-init.sql` 同步为与线上一致 | 已在线上库执行 ALTER 并验证：全部注释正常显示，41 条订单数据无丢失；其余表（`adp_user_auth` 等）注释编码正常无需处理 |
