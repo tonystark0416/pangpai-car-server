@@ -4,7 +4,8 @@
 const MySQL = require('../utils/mysql.js');
 
 /**
- * 分页获取汽车列表
+ * 分页获取汽车列表（小程序端）
+ * v1.6.7：仅输出上架车辆（status=1），按 sort 升序排序（sort 相同则新发布的在前）
  * @param {int} pageNumber
  * @returns
  */
@@ -16,7 +17,7 @@ async function getCarList(pageNumber) {
     const db = new MySQL();
     const pageSize = 10; // 每页显示的记录数
     const offset = (pageNumber - 1) * pageSize; // 计算偏移量
-    const sql_getCarList = "select * from pp_car order by update_time desc limit ?,?";
+    const sql_getCarList = "select * from pp_car where status = 1 order by sort asc, id desc limit ?,?";
     try {
         const result = await db.query(sql_getCarList, [offset, pageSize]);
         return result;

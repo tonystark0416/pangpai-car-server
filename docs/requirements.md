@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.6 ｜ 日期：2026-10-17 ｜ 状态：迭代中
+> 版本：v1.6.7 ｜ 日期：2026-10-17 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -122,7 +122,7 @@ pangpai-car/
 
 | 接口 | 方法 | 说明 |
 |---|---|---|
-| `/getCarList` | GET | 车辆分页列表（每页 10 条，按 `update_time desc`） |
+| `/getCarList` | GET | 车辆分页列表（每页 10 条，**v1.6.7 起仅返回上架车辆 `status=1`，按 `sort` 升序、同 sort 按 id 倒序**） |
 | `/checkout` | GET | 结算计价 |
 | `/getInsurancePrice` | GET | 保险报价（当前硬编码：L1 档 1 元/天、L2 档 120 元/天） |
 | `/getDriverPrice` | GET | 司机服务报价（当前硬编码 400 元/天） |
@@ -164,9 +164,10 @@ pangpai-car/
 | `/admin-api/dashboard/stats` | GET | 概览统计（用户/车辆/订单总数、已支付数、今日订单/支付金额） |
 | `/admin-api/users` | GET | 用户分页列表（关键词支持手机号/昵称/openid），附订单数与授权数 |
 | `/admin-api/users/:id` | GET | 用户详情（授权记录 `adp_user_auth`、驾驶证、最近 20 单） |
-| `/admin-api/cars` | GET | 车辆分页列表（关键词） |
-| `/admin-api/cars` | POST | 新增车辆 |
-| `/admin-api/cars/:id` | PUT | 编辑车辆 |
+| `/admin-api/cars` | GET | 车辆分页列表（关键词，可按 `status` 筛选上下架），按 sort 升序 |
+| `/admin-api/cars` | POST | 新增车辆（支持 `status`、`sort`） |
+| `/admin-api/cars/:id` | PUT | 编辑车辆（支持 `status`、`sort`，校验 sort 为 1~10000 整数） |
+| `/admin-api/cars/:id/status` | PUT | **上下架切换**（v1.6.7，body `{status: 1\|0}`） |
 | `/admin-api/cars/:id` | DELETE | 删除车辆（**存在关联订单时拒绝删除**） |
 | `/admin-api/orders` | GET | 订单分页列表（筛选：pay_status/order_status/关键词），联表车辆信息 |
 | `/admin-api/orders/:id` | GET | 订单详情（含车辆与下单用户信息） |
@@ -199,7 +200,7 @@ pangpai-car/
 
 | 表名 | 用途 | 字段 |
 |---|---|---|
-| `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time |
+| `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time, **status(上下架：1上架 0下架，v1.6.7)**, **sort(排序值 1~10000 整数，越小越靠前，v1.6.7)** |
 | `pp_order` | 租车订单 | 全部 23 字段均已加中文注释（v1.6.6）：id=订单ID, order_sn=订单号（PP+yyyyMMddHHmmss）, uid=下单用户ID（adp_user.id）, contact_phone=联系电话, car_id=车辆ID（pp_car.id）, rent_day=租车天数（**varchar(5)**）, rent_day_price=车辆日租金单价, rent_total_price=车辆租金合计, server_day_price=保险费单价（每天）, server_total_price=保险费合计, driver_price=司机服务费单价（每天）, driver_total_price=司机服务费合计, total_price=订单总价, **pay_status=支付状态 0待支付 1已支付 2已退款 3支付失败（v1.5.0）**, **transaction_id=微信支付单号**, **pay_time=支付时间**, **order_status=履约状态 0待取车 1已取车 2已还车 3已完成 4已取消（v1.5.0）**, create_time=创建时间, update_time=更新时间, pickup_address=取车地址(100), return_address=还车地址(100), pickup_time=取车时间（**varchar(50)，毫秒时间戳字符串**）, return_time=还车时间 |
 | `adp_user` | 多业务线统一用户 | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), openid(50)（存量字段，新用户不再写入）, phone(20), create_time, update_time |
 | `adp_user_auth` | 用户授权表（v1.4.0，一个小程序一行） | id, user_id, biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 (biz_code, openid) |
@@ -278,3 +279,4 @@ pangpai-car/
 | v1.6.4 | 2026-10-11 | 管理后台时间显示优化：① 新增 `admin-web/src/utils/format.js` 共享 `formatDateTime`（ISO/毫秒时间戳/Date → `YYYY-MM-DD HH:mm:ss` 东八区，空值与 0 显示 `-`）；② 订单列表创建时间、详情支付/取还车/创建时间，车辆列表更新时间，用户列表注册时间、详情注册/授权时间全部接入 | 实测 `2026-10-11T13:13:59.000Z` → `2026-10-11 21:13:59`；Orders 原局部 formatTs 一并收敛到共享工具 |
 | v1.6.5 | 2026-10-12 | access_token 更新机制双保险：① token 刷新任务纳入 PM2 托管（`ecosystem.config.cjs` 新增应用 `pangpai-token`，日志 `logs/token-*.log`）；② 读取侧新鲜度兜底——`getAccessTokenCached`/新增 `getWorkTokenCached` 在缓存文件缺失**或超过 90 分钟未刷新**时自动重取并落盘（原逻辑只兜底"文件不存在"，任务进程挂掉后过期 token 仍会报 40001） | 实测：将缓存 mtime 改为 2 小时前 → 自动重取 137 位新 token 并更新文件；微信 token 有效期 7200s，与小时级刷新任务余量充足 |
 | v1.6.6 | 2026-10-17 | 线上 `pp_order` 字段注释修正与补齐：① 修复 v1.5.0 所加注释的编码乱码（当时执行 ALTER 的连接字符集不正确，中文被错误编码写入）；② 23 个字段全部补上中文注释（含枚举含义）；③ `scripts/local-dev-init.sql` 同步为与线上一致 | 已在线上库执行 ALTER 并验证：全部注释正常显示，41 条订单数据无丢失；其余表（`adp_user_auth` 等）注释编码正常无需处理 |
+| v1.6.7 | 2026-10-17 | 车辆上下架 + 排序：① 线上 `pp_car` 新增 `status`（tinyint，1 上架/0 下架，默认 1）与 `sort`（int，1~10000，默认 100）两个字段；② 小程序端 `/getCarList` 仅返回 `status=1` 并按 `sort` 升序；③ 管理端新增 `PUT /admin-api/cars/:id/status` 上下架切换，列表支持 `status` 筛选，新增/编辑支持 `status`、`sort`（sort 校验 1~10000 整数）；④ `admin-web` 车辆页新增排序列（即时保存）、状态开关、上下架筛选与表单项 | 线上 21 辆车默认全部上架 sort=100；实测下架后小程序端列表已隐藏、排序生效、非法 sort(20001) 被拦截；测试后数据已复原 |

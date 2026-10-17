@@ -30,6 +30,7 @@ router.get('/users/:id', asyncHandler(user.detail));
 router.get('/cars', asyncHandler(car.list));
 router.post('/cars', asyncHandler(car.create));
 router.put('/cars/:id', asyncHandler(car.update));
+router.put('/cars/:id/status', asyncHandler(car.updateStatus));
 router.delete('/cars/:id', asyncHandler(car.remove));
 
 // 订单管理

@@ -21,6 +21,8 @@ CREATE TABLE pp_car (
   promotion_day_price DECIMAL(10,2) DEFAULT NULL COMMENT '每日租金（促销价，结算计价用此字段）',
   create_time         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  status              TINYINT NOT NULL DEFAULT 1 COMMENT '上下架状态：1上架 0下架（v1.6.7）',
+  sort                INT NOT NULL DEFAULT 100 COMMENT '排序值：1~10000，越小越靠前（v1.6.7）',
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租赁车辆表';
 

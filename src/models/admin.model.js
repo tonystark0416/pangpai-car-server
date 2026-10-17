@@ -90,13 +90,23 @@ async function getUserDetail(id) {
 
 /* ================= 车辆管理 ================= */
 
-async function getCarList({ page = 1, pageSize = 10, keyword = '' }) {
+async function getCarList({ page = 1, pageSize = 10, keyword = '', status }) {
   const { offset, pageSize: size } = pageParams(page, pageSize);
   const db = new MySQL();
-  const where = keyword ? 'WHERE car_name LIKE ? OR des LIKE ?' : '';
-  const params = keyword ? [`%${keyword}%`, `%${keyword}%`] : [];
+  const conditions = [];
+  const params = [];
+  if (keyword) {
+    conditions.push('(car_name LIKE ? OR des LIKE ?)');
+    params.push(`%${keyword}%`, `%${keyword}%`);
+  }
+  if (status !== undefined && status !== '' && status !== null) {
+    conditions.push('status = ?');
+    params.push(Number(status));
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   try {
-    const rows = await db.query(`SELECT * FROM pp_car ${where} ORDER BY update_time DESC LIMIT ?, ?`, [
+    // 管理端按 sort 升序展示，便于对照小程序端顺序调整
+    const rows = await db.query(`SELECT * FROM pp_car ${where} ORDER BY sort ASC, id DESC LIMIT ?, ?`, [
       ...params,
       offset,
       size,
@@ -108,12 +118,20 @@ async function getCarList({ page = 1, pageSize = 10, keyword = '' }) {
   }
 }
 
-async function createCar({ car_name, image_url, des, day_price, promotion_day_price }) {
+async function createCar({ car_name, image_url, des, day_price, promotion_day_price, status, sort }) {
   const db = new MySQL();
   try {
     const res = await db.query(
-      'INSERT INTO pp_car (car_name, image_url, des, day_price, promotion_day_price) VALUES (?,?,?,?,?)',
-      [car_name, image_url, des || null, day_price, promotion_day_price || null]
+      'INSERT INTO pp_car (car_name, image_url, des, day_price, promotion_day_price, status, sort) VALUES (?,?,?,?,?,?,?)',
+      [
+        car_name,
+        image_url,
+        des || null,
+        day_price,
+        promotion_day_price || null,
+        status === undefined || status === null ? 1 : Number(status),
+        sort === undefined || sort === null || sort === '' ? 100 : Number(sort),
+      ]
     );
     return res.insertId;
   } finally {
@@ -121,13 +139,33 @@ async function createCar({ car_name, image_url, des, day_price, promotion_day_pr
   }
 }
 
-async function updateCar(id, { car_name, image_url, des, day_price, promotion_day_price }) {
+async function updateCar(id, { car_name, image_url, des, day_price, promotion_day_price, status, sort }) {
   const db = new MySQL();
   try {
     const res = await db.query(
-      'UPDATE pp_car SET car_name = ?, image_url = ?, des = ?, day_price = ?, promotion_day_price = ? WHERE id = ?',
-      [car_name, image_url, des || null, day_price, promotion_day_price || null, id]
+      'UPDATE pp_car SET car_name = ?, image_url = ?, des = ?, day_price = ?, promotion_day_price = ?, status = ?, sort = ? WHERE id = ?',
+      [
+        car_name,
+        image_url,
+        des || null,
+        day_price,
+        promotion_day_price || null,
+        status === undefined || status === null ? 1 : Number(status),
+        sort === undefined || sort === null || sort === '' ? 100 : Number(sort),
+        id,
+      ]
     );
+    return res.affectedRows;
+  } finally {
+    db.close();
+  }
+}
+
+/** 上下架快捷切换（1 上架 / 0 下架） */
+async function updateCarStatus(id, status) {
+  const db = new MySQL();
+  try {
+    const res = await db.query('UPDATE pp_car SET status = ? WHERE id = ?', [Number(status), id]);
     return res.affectedRows;
   } finally {
     db.close();
@@ -253,6 +291,7 @@ module.exports = {
   getCarList,
   createCar,
   updateCar,
+  updateCarStatus,
   deleteCar,
   getOrderList,
   getOrderDetail,

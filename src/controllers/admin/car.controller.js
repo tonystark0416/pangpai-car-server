@@ -4,8 +4,8 @@
 const adminModel = require('../../models/admin.model');
 
 async function list(req, res) {
-  const { page, pageSize, keyword } = req.query;
-  const data = await adminModel.getCarList({ page, pageSize, keyword });
+  const { page, pageSize, keyword, status } = req.query;
+  const data = await adminModel.getCarList({ page, pageSize, keyword, status });
   res.json({ code: 0, data });
 }
 
@@ -21,6 +21,17 @@ function validate(car) {
   }
   if (car.promotion_day_price && (Number.isNaN(Number(car.promotion_day_price)) || Number(car.promotion_day_price) < 0)) {
     return '促销价必须为非负数字';
+  }
+  if (car.status !== undefined && car.status !== null && car.status !== '') {
+    if (![0, 1, '0', '1'].includes(car.status)) {
+      return '上下架状态只能为 1（上架）或 0（下架）';
+    }
+  }
+  if (car.sort !== undefined && car.sort !== null && car.sort !== '') {
+    const sort = Number(car.sort);
+    if (!Number.isInteger(sort) || sort < 1 || sort > 10000) {
+      return '排序值必须为 1~10000 之间的整数';
+    }
   }
   return null;
 }
@@ -48,6 +59,19 @@ async function update(req, res) {
   res.json({ code: 0 });
 }
 
+/** 上下架切换：body { status: 1|0 } */
+async function updateStatus(req, res) {
+  const { status } = req.body || {};
+  if (![0, 1, '0', '1'].includes(status)) {
+    return res.json({ code: 400, msg: '上下架状态只能为 1（上架）或 0（下架）' });
+  }
+  const affected = await adminModel.updateCarStatus(req.params.id, status);
+  if (!affected) {
+    return res.json({ code: 404, msg: '车辆不存在' });
+  }
+  res.json({ code: 0, msg: Number(status) === 1 ? '已上架' : '已下架' });
+}
+
 async function remove(req, res) {
   const affected = await adminModel.deleteCar(req.params.id);
   if (affected === -1) {
@@ -59,4 +83,4 @@ async function remove(req, res) {
   res.json({ code: 0 });
 }
 
-module.exports = { list, create, update, remove };
+module.exports = { list, create, update, updateStatus, remove };

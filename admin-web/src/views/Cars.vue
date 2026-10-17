@@ -3,6 +3,10 @@
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="车名 / 描述" clearable style="width: 220px" @keyup.enter="load" />
+        <el-select v-model="query.status" clearable placeholder="全部状态" style="width: 120px">
+          <el-option label="上架" :value="1" />
+          <el-option label="下架" :value="0" />
+        </el-select>
         <el-button type="primary" @click="load">查询</el-button>
         <el-button type="success" @click="openForm()">新增车辆</el-button>
       </div>
@@ -23,6 +27,18 @@
         <el-table-column label="促销价" width="100">
           <template #default="{ row }">
             <span :class="{ promo: row.promotion_day_price }">￥{{ row.promotion_day_price ?? '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="排序" width="130">
+          <template #default="{ row }">
+            <el-input-number v-model="row.sort" :min="1" :max="10000" :step="1" size="small" controls-position="right"
+              style="width: 110px" @change="saveSort(row)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-switch v-model="row.status" :active-value="1" :inactive-value="0" active-text="上架" inactive-text="下架"
+              inline-prompt @change="toggleStatus(row)" />
           </template>
         </el-table-column>
         <el-table-column label="更新时间" width="170">
@@ -58,6 +74,17 @@
         <el-form-item label="促销价">
           <el-input-number v-model="form.promotion_day_price" :min="0" :precision="2" :step="10" style="width: 100%" />
         </el-form-item>
+        <el-form-item label="排序值">
+          <el-input-number v-model="form.sort" :min="1" :max="10000" :step="1" style="width: 100%" />
+          <div class="tip">1~10000 的整数，越小越靠前</div>
+        </el-form-item>
+        <el-form-item label="上架状态">
+          <el-radio-group v-model="form.status">
+            <el-radio :value="1">上架</el-radio>
+            <el-radio :value="0">下架</el-radio>
+          </el-radio-group>
+          <div class="tip">下架后小程序端车辆列表不再展示</div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
@@ -77,10 +104,19 @@ const loading = ref(false);
 const saving = ref(false);
 const rows = ref([]);
 const total = ref(0);
-const query = reactive({ page: 1, pageSize: 10, keyword: '' });
+const query = reactive({ page: 1, pageSize: 10, keyword: '', status: '' });
 
 const formVisible = ref(false);
-const form = reactive({ id: null, car_name: '', image_url: '', des: '', day_price: 0, promotion_day_price: 0 });
+const form = reactive({
+  id: null,
+  car_name: '',
+  image_url: '',
+  des: '',
+  day_price: 0,
+  promotion_day_price: 0,
+  sort: 100,
+  status: 1,
+});
 
 async function load() {
   loading.value = true;
@@ -102,11 +138,53 @@ function openForm(row) {
       des: row.des || '',
       day_price: Number(row.day_price),
       promotion_day_price: row.promotion_day_price ? Number(row.promotion_day_price) : 0,
+      sort: Number(row.sort) || 100,
+      status: Number(row.status),
     });
   } else {
-    Object.assign(form, { id: null, car_name: '', image_url: '', des: '', day_price: 0, promotion_day_price: 0 });
+    Object.assign(form, {
+      id: null,
+      car_name: '',
+      image_url: '',
+      des: '',
+      day_price: 0,
+      promotion_day_price: 0,
+      sort: 100,
+      status: 1,
+    });
   }
   formVisible.value = true;
+}
+
+/** 上下架快捷切换 */
+async function toggleStatus(row) {
+  try {
+    await api.put(`/cars/${row.id}/status`, { status: row.status });
+    ElMessage.success(row.status === 1 ? '已上架' : '已下架');
+    load();
+  } catch (e) {
+    ElMessage.error('状态更新失败');
+    row.status = row.status === 1 ? 0 : 1;
+  }
+}
+
+/** 排序值即时保存（整行提交，后端按完整字段校验） */
+async function saveSort(row) {
+  try {
+    await api.put(`/cars/${row.id}`, {
+      car_name: row.car_name,
+      image_url: row.image_url,
+      des: row.des || '',
+      day_price: Number(row.day_price),
+      promotion_day_price: row.promotion_day_price ? Number(row.promotion_day_price) : null,
+      status: row.status,
+      sort: Number(row.sort),
+    });
+    ElMessage.success('排序已保存');
+    load();
+  } catch (e) {
+    ElMessage.error('排序保存失败');
+  }
 }
 
 async function save() {
@@ -152,5 +230,11 @@ onMounted(load);
 .promo {
   color: #f56c6c;
   font-weight: 600;
+}
+.tip {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 </style>
