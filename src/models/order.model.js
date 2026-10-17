@@ -7,13 +7,25 @@ const car = require('./car.model.js');
 
 /**
  * 创建订单
+ * v1.6.8：下单前校验车辆上架状态，已下架车辆不允许下单
  * @param {*} checkOutData 结算计价信息整个传入
+ * @returns 订单对象；-2=车辆不存在；-3=车辆已下架；undefined=写入失败
  */
 async function createOrder(checkOutData) {
     const db = new MySQL();
     const order_sn = genOrderSn(); //获取订单号
     const sqlCreateOrder = 'INSERT INTO pp_order (order_sn,uid,contact_phone,car_id,rent_day,rent_day_price,rent_total_price,server_day_price,server_total_price,driver_price,driver_total_price,total_price,pickup_address,return_address,pickup_time,return_time) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
     const orderData = checkOutData.checkOutArray;
+
+    // 车辆可用性校验：不存在 / 已下架（status=0）均拒绝下单
+    const carInfo = await car.getCarInfo(orderData.data && orderData.data.id);
+    if (!carInfo) {
+        return -2;
+    }
+    if (Number(carInfo.status) !== 1) {
+        return -3;
+    }
+
     try {
         const res = await db.query(sqlCreateOrder, [order_sn, orderData.uid, orderData.contact_phone, orderData.data.id, orderData.rentDay, orderData.rent_day_price, orderData.rent_total_price, orderData.server_day_price, orderData.server_total_price, orderData.driver_price, orderData.driver_total_price, orderData.total_price, orderData.pickUpAddress, orderData.returnAddress, orderData.pickUpTime, orderData.returnTime]);
 

@@ -13,6 +13,16 @@ async function createOrder(req, res) {
     return res.status(400).json({ code: 400, msg: '参数缺失：缺少 checkOutArray 或 uid' });
   }
   const result = await order.createOrder(data);
+  // v1.6.8：车辆不存在/已下架时拒绝下单（模型层返回约定见 order.model.createOrder）
+  if (result === -2) {
+    return res.status(400).json({ code: 400, msg: '车辆不存在，无法下单' });
+  }
+  if (result === -3) {
+    return res.status(400).json({ code: 400, msg: '该车辆已下架，暂不可预订' });
+  }
+  if (!result) {
+    return res.status(500).json({ code: 500, msg: '订单创建失败' });
+  }
   res.json({ message: '数据接收成功', result });
 }
 
