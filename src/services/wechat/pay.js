@@ -106,11 +106,22 @@ class WechatPayV2 {
             };
 
             // 如果需要证书（退款等操作）
-            if (useCert && this.config.pfx) {
-                requestConfig.httpsAgent = new (require('https').Agent)({
-                    pfx: this.config.pfx,
-                    passphrase: this.config.mchId
-                });
+            // v1.6.11：优先使用 PEM（cert/key），兼容 Node 17+ 的 OpenSSL 3；无 PEM 时回退 p12
+            if (useCert) {
+                const agentOpts = {};
+                if (this.config.cert && this.config.key) {
+                    agentOpts.cert = this.config.cert;
+                    agentOpts.key = this.config.key;
+                } else if (this.config.pfx) {
+                    agentOpts.pfx = this.config.pfx;
+                    agentOpts.passphrase = this.config.mchId;
+                } else {
+                    throw new Error(
+                        `缺少微信支付退款证书，请将 apiclient_cert.p12 放到 ${this.config.pfxPath}，` +
+                        `或转换为 PEM 放到 ${this.config.certPath} / ${this.config.keyPath}（可用 .env 的 WX_CERT_PATH / WX_KEY_PATH 指定）`
+                    );
+                }
+                requestConfig.httpsAgent = new (require('https').Agent)(agentOpts);
             }
 
             const response = await axios.post(url, xmlData, requestConfig);
@@ -259,9 +270,10 @@ class WechatPayV2 {
 
         // v1.6.11 修复：原误用 config.appId（不存在，签名为空导致参数缺失）
         // 且退款必须走证书双向认证，缺证书时给出明确错误而非静默失败
-        if (!this.config.pfx) {
+        if (!this.config.hasCert()) {
             throw new Error(
-                `缺少微信支付退款证书（p12），请将 apiclient_cert.p12 放到 ${this.config.pfxPath} 或在 .env 配置 WX_PFX_PATH`
+                `缺少微信支付退款证书：请将 apiclient_cert.p12 放到 ${this.config.pfxPath}，` +
+                `或（Node 17+ 推荐）转成 PEM 放到 ${this.config.certPath} / ${this.config.keyPath}`
             );
         }
 

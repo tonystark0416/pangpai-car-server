@@ -57,13 +57,32 @@ const config = {
     refundNotifyUrl: env('WX_REFUND_NOTIFY_URL'),
     spbillCreateIp: env('PAY_SPBILL_IP', '127.0.0.1'),
     pfxPath: env('WX_PFX_PATH') || path.join(ROOT, 'src/data/apiclient_cert.p12'),
+    // PEM 形式（v1.6.11 起优先）：Node 17+ 自带 OpenSSL 3 会拒绝微信 p12 的老式 RC2 加密
+    // （报错 Unsupported PKCS12 PFX data），将 p12 转成 PEM 后走 cert/key 加载即可全版本通用
+    certPath: env('WX_CERT_PATH') || path.join(ROOT, 'src/data/apiclient_cert.pem'),
+    keyPath: env('WX_KEY_PATH') || path.join(ROOT, 'src/data/apiclient_key.pem'),
     // 惰性读取证书，未配置证书时不阻断服务启动
     get pfx() {
       if (fs.existsSync(this.pfxPath)) {
         return fs.readFileSync(this.pfxPath);
       }
-      console.warn('[config] 未找到微信支付证书:', this.pfxPath);
       return null;
+    },
+    get cert() {
+      if (fs.existsSync(this.certPath)) {
+        return fs.readFileSync(this.certPath);
+      }
+      return null;
+    },
+    get key() {
+      if (fs.existsSync(this.keyPath)) {
+        return fs.readFileSync(this.keyPath);
+      }
+      return null;
+    },
+    /** 退款等需证书的操作是否具备可用证书（PEM 优先，p12 兜底） */
+    hasCert() {
+      return Boolean((this.cert && this.key) || this.pfx);
     },
   },
 
