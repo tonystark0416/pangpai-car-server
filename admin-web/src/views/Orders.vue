@@ -30,7 +30,14 @@
         <el-table-column label="车辆" min-width="140">
           <template #default="{ row }">{{ row.car_name || `#${row.car_id}` }}</template>
         </el-table-column>
+        <el-table-column prop="uid" label="用户ID" width="90" />
         <el-table-column prop="contact_phone" label="联系电话" width="120" />
+        <el-table-column label="租车天数" width="90">
+          <template #default="{ row }">{{ row.rent_day }} 天</template>
+        </el-table-column>
+        <el-table-column label="日租金" width="100">
+          <template #default="{ row }">￥{{ row.rent_day_price }}</template>
+        </el-table-column>
         <el-table-column label="总价" width="100">
           <template #default="{ row }">￥{{ row.total_price }}</template>
         </el-table-column>
@@ -68,8 +75,21 @@
     </el-card>
 
     <!-- 详情抽屉 -->
-    <el-drawer v-model="detailVisible" title="订单详情" size="480px">
-      <el-descriptions :column="1" border v-if="detail">
+    <el-drawer v-model="detailVisible" title="订单详情" size="520px">
+      <div v-if="detail">
+        <!-- 车辆图片（点击可放大预览） -->
+        <div v-if="detail.image_url" class="detail-car">
+          <el-image
+            :src="detail.image_url"
+            :preview-src-list="[detail.image_url]"
+            preview-teleported
+            fit="cover"
+            class="detail-car-img"
+          />
+          <div class="detail-car-name">{{ detail.car_name }}</div>
+        </div>
+        <el-empty v-else :image-size="60" description="该订单车辆暂无图片" />
+        <el-descriptions :column="1" border class="detail-desc">
         <el-descriptions-item label="订单号">{{ detail.order_sn }}</el-descriptions-item>
         <el-descriptions-item label="车辆">{{ detail.car_name }}</el-descriptions-item>
         <el-descriptions-item label="下单用户">
@@ -94,6 +114,7 @@
         <el-descriptions-item label="还车">{{ detail.return_address }}（{{ formatDateTime(detail.return_time) }}）</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ formatDateTime(detail.create_time) }}</el-descriptions-item>
       </el-descriptions>
+      </div>
     </el-drawer>
 
     <!-- 状态流转 -->
@@ -169,5 +190,23 @@ onMounted(load);
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+.detail-car {
+  margin-bottom: 16px;
+  text-align: center;
+}
+.detail-car-img {
+  width: 100%;
+  max-height: 220px;
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+.detail-car-name {
+  margin-top: 8px;
+  font-size: 14px;
+  color: #606266;
+}
+.detail-desc {
+  margin-top: 8px;
 }
 </style>
