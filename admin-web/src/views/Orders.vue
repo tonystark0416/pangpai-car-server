@@ -110,12 +110,35 @@
         <el-descriptions-item label="履约状态">
           <el-tag :type="orderStatusType(detail.order_status)" size="small">{{ orderStatusText(detail.order_status) }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="取车">{{ detail.pickup_address }}（{{ formatDateTime(detail.pickup_time) }}）</el-descriptions-item>
-        <el-descriptions-item label="还车">{{ detail.return_address }}（{{ formatDateTime(detail.return_time) }}）</el-descriptions-item>
+        <el-descriptions-item label="取车">
+          {{ detail.pickup_address }}（{{ formatDateTime(detail.pickup_time) }}）
+        </el-descriptions-item>
+        <el-descriptions-item label="还车">
+          {{ detail.return_address }}（{{ formatDateTime(detail.return_time) }}）
+        </el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ formatDateTime(detail.create_time) }}</el-descriptions-item>
       </el-descriptions>
+        <div class="detail-actions">
+          <el-button type="primary" plain @click="openAddress(detail)">修改取车/还车地址</el-button>
+        </div>
       </div>
     </el-drawer>
+
+    <!-- 修改取车/还车地址 -->
+    <el-dialog v-model="addressVisible" title="修改取车 / 还车地址" width="420px">
+      <el-form :model="addressForm" label-width="80px">
+        <el-form-item label="取车地址" required>
+          <el-input v-model="addressForm.pickup_address" maxlength="100" show-word-limit placeholder="请输入取车地址" />
+        </el-form-item>
+        <el-form-item label="还车地址" required>
+          <el-input v-model="addressForm.return_address" maxlength="100" show-word-limit placeholder="请输入还车地址" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="addressVisible = false">取消</el-button>
+        <el-button type="primary" :loading="addressSaving" @click="submitAddress">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 状态流转 -->
     <el-dialog v-model="statusVisible" title="订单状态流转" width="360px">
@@ -148,6 +171,10 @@ const detail = ref(null);
 const statusVisible = ref(false);
 const statusForm = reactive({ id: null, order_status: 0 });
 
+const addressVisible = ref(false);
+const addressSaving = ref(false);
+const addressForm = reactive({ id: null, pickup_address: '', return_address: '' });
+
 async function load() {
   loading.value = true;
   try {
@@ -168,6 +195,33 @@ function openStatus(row) {
   statusForm.id = row.id;
   statusForm.order_status = row.order_status;
   statusVisible.value = true;
+}
+
+function openAddress(row) {
+  addressForm.id = row.id;
+  addressForm.pickup_address = row.pickup_address || '';
+  addressForm.return_address = row.return_address || '';
+  addressVisible.value = true;
+}
+
+async function submitAddress() {
+  if (!addressForm.pickup_address.trim() || !addressForm.return_address.trim()) {
+    ElMessage.warning('取车地址和还车地址均不能为空');
+    return;
+  }
+  addressSaving.value = true;
+  try {
+    await api.put(`/orders/${addressForm.id}/address`, {
+      pickup_address: addressForm.pickup_address.trim(),
+      return_address: addressForm.return_address.trim(),
+    });
+    ElMessage.success('地址已更新');
+    addressVisible.value = false;
+    detail.value = { ...detail.value, pickup_address: addressForm.pickup_address.trim(), return_address: addressForm.return_address.trim() };
+    load();
+  } finally {
+    addressSaving.value = false;
+  }
 }
 
 async function submitStatus() {
@@ -208,5 +262,9 @@ onMounted(load);
 }
 .detail-desc {
   margin-top: 8px;
+}
+.detail-actions {
+  margin-top: 16px;
+  text-align: right;
 }
 </style>

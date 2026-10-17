@@ -253,6 +253,28 @@ async function updateOrderStatus(id, order_status) {
   }
 }
 
+/** 修改订单取车/还车地址（v1.6.10，两个字段至少传一个） */
+async function updateOrderAddress(id, { pickup_address, return_address }) {
+  const db = new MySQL();
+  const sets = [];
+  const params = [];
+  if (pickup_address !== undefined) {
+    sets.push('pickup_address = ?');
+    params.push(pickup_address);
+  }
+  if (return_address !== undefined) {
+    sets.push('return_address = ?');
+    params.push(return_address);
+  }
+  if (!sets.length) return 0;
+  try {
+    const res = await db.query(`UPDATE pp_order SET ${sets.join(', ')} WHERE id = ?`, [...params, id]);
+    return res.affectedRows;
+  } finally {
+    db.close();
+  }
+}
+
 /* ================= 概览统计 ================= */
 
 async function getDashboardStats() {
@@ -296,5 +318,6 @@ module.exports = {
   getOrderList,
   getOrderDetail,
   updateOrderStatus,
+  updateOrderAddress,
   getDashboardStats,
 };

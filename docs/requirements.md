@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.9 ｜ 日期：2026-10-17 ｜ 状态：迭代中
+> 版本：v1.6.10 ｜ 日期：2026-10-17 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -174,6 +174,7 @@ pangpai-car/
 | `/admin-api/orders` | GET | 订单分页列表（筛选：pay_status/order_status/关键词），联表车辆信息 |
 | `/admin-api/orders/:id` | GET | 订单详情（含车辆与下单用户信息） |
 | `/admin-api/orders/:id/status` | PUT | 订单履约状态流转（待取车→已取车→已还车→已完成/已取消） |
+| `/admin-api/orders/:id/address` | PUT | **修改取车/还车地址**（v1.6.10，body `{pickup_address?, return_address?}`，可单改一个；校验非空且 ≤100 字符） |
 
 管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）。列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
 
@@ -284,3 +285,4 @@ pangpai-car/
 | v1.6.7 | 2026-10-17 | 车辆上下架 + 排序：① 线上 `pp_car` 新增 `status`（tinyint，1 上架/0 下架，默认 1）与 `sort`（int，1~10000，默认 100）两个字段；② 小程序端 `/getCarList` 仅返回 `status=1` 并按 `sort` 升序；③ 管理端新增 `PUT /admin-api/cars/:id/status` 上下架切换，列表支持 `status` 筛选，新增/编辑支持 `status`、`sort`（sort 校验 1~10000 整数）；④ `admin-web` 车辆页新增排序列（即时保存）、状态开关、上下架筛选与表单项 | 线上 21 辆车默认全部上架 sort=100；实测下架后小程序端列表已隐藏、排序生效、非法 sort(20001) 被拦截；测试后数据已复原 |
 | v1.6.8 | 2026-10-17 | 下单校验车辆上架状态（上下架闭环）：① `order.model.createOrder` 下单前查询车辆，不存在返回 `-2`、已下架（`status≠1`）返回 `-3`；② `order.controller.createOrder` 映射为明确响应：车辆不存在→`400 车辆不存在，无法下单`、已下架→`400 该车辆已下架，暂不可预订`、写入失败→`500`；③ 新增 `docs/api-for-miniprogram.md`（面向小程序前端的完整 C 端接口文档，含 Change Log，后续涉及小程序接口的改动必须同步更新） | 实测：上架车下单成功（订单号 PP20261017174739），下架后同参数下单被拦截；测试订单已删除，订单总数保持 41 |
 | v1.6.9 | 2026-10-17 | 管理后台订单管理增强（纯前端改动，后端接口未变）：① 订单列表新增「用户ID」（`uid`）、「租车天数」（`rent_day`）、「日租金」（`rent_day_price`）三列；② 订单详情抽屉顶部新增车辆图片（`image_url`，`el-image` 点击放大预览，无图片时展示空状态占位）；抽屉宽度 480→520px | 构建通过；已确认订单列表/详情数据含 `uid`、`rent_day`、`rent_day_price`、`image_url` 字段，无需改后端 SQL |
+| v1.6.10 | 2026-10-17 | 后台支持修改订单取车/还车地址：① `admin.model` 新增 `updateOrderAddress(id, {pickup_address?, return_address?})`（动态 SET，支持单字段更新）；② 新增接口 `PUT /admin-api/orders/:id/address`，校验非空 trim、≤100 字符（与 `pp_order` 两列 varchar(100) 一致）；③ `admin-web` 订单详情抽屉底部新增「修改取车/还车地址」按钮 + 弹窗（100 字计数，保存后即时刷新详情与列表） | 实测：双字段更新、仅更新取车地址、空值拦截 400、不存在订单 404 均正常；测试订单(#41)地址已还原 |

@@ -37,5 +37,6 @@ router.delete('/cars/:id', asyncHandler(car.remove));
 router.get('/orders', asyncHandler(order.list));
 router.get('/orders/:id', asyncHandler(order.detail));
 router.put('/orders/:id/status', asyncHandler(order.updateStatus));
+router.put('/orders/:id/address', asyncHandler(order.updateAddress));
 
 module.exports = router;
