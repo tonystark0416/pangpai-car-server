@@ -175,6 +175,18 @@ pangpai-car/
 > openssl pkcs12 -in apiclient_cert.p12 -nocerts -nodes -out apiclient_key.pem  -passin pass:商户号
 > ```
 > 实测：用 PEM 发起退款，微信正常受理并返回业务结果（未支付订单返回 `ORDERNOTEXIST`），证明证书与签名链路通。
+>
+> **服务器（Node 18+）部署 PEM 的两种方式**（默认路径 `src/data/`）：
+> ```bash
+> # A. 在服务器上直接转换（p12 已在 src/data/，口令为商户号）
+> cd /项目目录/src/data
+> openssl pkcs12 -in apiclient_cert.p12 -nokeys  -out apiclient_cert.pem -passin pass:商户号
+> openssl pkcs12 -in apiclient_cert.p12 -nocerts -nodes -out apiclient_key.pem  -passin pass:商户号
+>
+> # B. 本地转好后上传 cert/key 两个 pem 到 src/data/
+> scp src/data/apiclient_cert.pem src/data/apiclient_key.pem root@服务器:/项目目录/src/data/
+> ```
+> 转换后无需改代码/环境变量（默认路径即生效），只需 `pm2 restart pangpaicar`。pem 含私钥，**不要提交进 git**（`src/data/` 已在 `.gitignore` 中）。
 
 **回调处理流程（v1.5.0 起闭环）**：验签 → 订单存在性核验 → **金额核验**（回调 total_fee vs 订单 total_price×100）→ **落库**（`pay_status=1`、`transaction_id`、`pay_time`，`WHERE pay_status=0` 保证幂等）→ 企业微信通知员工 → 应答 SUCCESS。验签失败/订单不存在/金额不一致/DB 异常应答 FAIL（微信按 15s/1m/…策略重推）；重复通知幂等跳落后仍应答 SUCCESS。
 
@@ -310,5 +322,5 @@ pangpai-car/
 | v1.6.8 | 2026-10-17 | 下单校验车辆上架状态（上下架闭环）：① `order.model.createOrder` 下单前查询车辆，不存在返回 `-2`、已下架（`status≠1`）返回 `-3`；② `order.controller.createOrder` 映射为明确响应：车辆不存在→`400 车辆不存在，无法下单`、已下架→`400 该车辆已下架，暂不可预订`、写入失败→`500`；③ 新增 `docs/api-for-miniprogram.md`（面向小程序前端的完整 C 端接口文档，含 Change Log，后续涉及小程序接口的改动必须同步更新） | 实测：上架车下单成功（订单号 PP20261017174739），下架后同参数下单被拦截；测试订单已删除，订单总数保持 41 |
 | v1.6.9 | 2026-10-17 | 管理后台订单管理增强（纯前端改动，后端接口未变）：① 订单列表新增「用户ID」（`uid`）、「租车天数」（`rent_day`）、「日租金」（`rent_day_price`）三列；② 订单详情抽屉顶部新增车辆图片（`image_url`，`el-image` 点击放大预览，无图片时展示空状态占位）；抽屉宽度 480→520px | 构建通过；已确认订单列表/详情数据含 `uid`、`rent_day`、`rent_day_price`、`image_url` 字段，无需改后端 SQL |
 | v1.6.10 | 2026-10-17 | 后台支持修改订单取车/还车地址：① `admin.model` 新增 `updateOrderAddress(id, {pickup_address?, return_address?})`（动态 SET，支持单字段更新）；② 新增接口 `PUT /admin-api/orders/:id/address`，校验非空 trim、≤100 字符（与 `pp_order` 两列 varchar(100) 一致）；③ `admin-web` 订单详情抽屉底部新增「修改取车/还车地址」按钮 + 弹窗（100 字计数，保存后即时刷新详情与列表） | 实测：双字段更新、仅更新取车地址、空值拦截 400、不存在订单 404 均正常；测试订单(#41)地址已还原 |
-| v1.6.11 | 2026-10-17 | 退款闭环：① 修复 `WechatPayV2.refund/orderQuery/closeOrder/getAppParams` 误用不存在的 `config.appId`（应为 `appid`，否则退款签名参数缺失必然失败），退款增加 `return_code/result_code` 校验与缺证书时的明确报错；② 新增 `src/services/refund.service.js` 统一退款流程——调微信 `secapi/pay/refund`（p12 证书）成功后再由 `order.model.markOrderRefunded` 落库 `pay_status=2`（已退款）+ `order_status=4`（已取消），失败不改状态；③ 管理端 `POST /admin-api/orders/:id/refund`（**不校验订单状态**，支持全额/部分退款）+ 后台订单详情「退款」按钮与弹窗（金额/原因）；④ 小程序端 `POST /cancelRefund`（校验归属 uid + `pay_status=1` + `order_status=0`，仅未取车可退） | 实测：缺证书时返回明确错误不崩溃；C 端 403/400/404 校验均生效；`markOrderRefunded` 落库 pay_status=2、order_status=4 正确（测试后已还原）。**待办：服务器需部署证书（Node 17+ 须用 PEM 方式），否则线上退款不可用** |
+| v1.6.11 | 2026-10-17 | 退款闭环：① 修复 `WechatPayV2.refund/orderQuery/closeOrder/getAppParams` 误用不存在的 `config.appId`（应为 `appid`，否则退款签名参数缺失必然失败），退款增加 `return_code/result_code` 校验与缺证书时的明确报错；② 新增 `src/services/refund.service.js` 统一退款流程——调微信 `secapi/pay/refund`（p12 证书）成功后再由 `order.model.markOrderRefunded` 落库 `pay_status=2`（已退款）+ `order_status=4`（已取消），失败不改状态；③ 管理端 `POST /admin-api/orders/:id/refund`（**不校验订单状态**，支持全额/部分退款）+ 后台订单详情「退款」按钮与弹窗（金额/原因）；④ 小程序端 `POST /cancelRefund`（校验归属 uid + `pay_status=1` + `order_status=0`，仅未取车可退） | 实测：缺证书时返回明确错误不崩溃；C 端 403/400/404 校验均生效；`markOrderRefunded` 落库 pay_status=2、order_status=4 正确（测试后已还原）。**已实测**：对真实已支付订单 `PP20261017215847`（￥301.00）走后台退款，微信返回退款单号 `50302308702026101745339735830`，订单自动置为 `pay_status=2` + `order_status=4`；已退款订单再次发起 C 端退款被拦截为 `400 订单已退款`。**待办：服务器（Node 18+）需部署 PEM 证书** |
 | v1.6.11 | 2026-10-17 | 退款证书加载兼容：Node 17+ 的 OpenSSL 3 拒绝微信 p12 的老式 RC2 加密（`Unsupported PKCS12 PFX data`），config 新增 `WX_CERT_PATH`/`WX_KEY_PATH` 与 `hasCert()`，`request()` 改为 **PEM(cert/key) 优先、p12 兜底** | 实测：PEM 方式发起退款，微信受理并返回 `ORDERNOTEXIST`（未支付订单的业务错误），证明证书双向认证与签名链路通；p12 方式在 Node 24 下确认报 RC2 不受支持 |
