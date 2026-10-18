@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.11 ｜ 日期：2026-10-17 ｜ 状态：迭代中
+> 版本：v1.6.12 ｜ 日期：2026-10-18 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -125,10 +125,10 @@ pangpai-car/
 | 接口 | 方法 | 说明 |
 |---|---|---|
 | `/getCarList` | GET | 车辆分页列表（每页 10 条，**v1.6.7 起仅返回上架车辆 `status=1`，按 `sort` 升序、同 sort 按 id 倒序**） |
-| `/checkout` | GET | 结算计价 |
+| `/checkout` | GET | 结算计价（**v1.6.12：天数按 24h 向上取整且≥1 天；金额服务端重算；校验时间先后与保险/司机白名单**） |
 | `/getInsurancePrice` | GET | 保险报价（当前硬编码：L1 档 1 元/天、L2 档 120 元/天） |
 | `/getDriverPrice` | GET | 司机服务报价（当前硬编码 400 元/天） |
-| `/createOrder` | POST | 创建订单，body 为 `{checkOutArray: {...结算结果}}`，缺参返回 400 |
+| `/createOrder` | POST | 创建订单，body 为 `{checkOutArray: {...结算结果}}`，缺参返回 400（**v1.6.12：金额取服务端重算结果，不采信前端传价**） |
 | `/getOrderList` | GET | 按 uid 分页查询订单 |
 | `/getOrderDetail` | GET | 按 orderSn + uid 查订单详情（含车辆信息、格式化时间） |
 
@@ -323,4 +323,5 @@ pangpai-car/
 | v1.6.9 | 2026-10-17 | 管理后台订单管理增强（纯前端改动，后端接口未变）：① 订单列表新增「用户ID」（`uid`）、「租车天数」（`rent_day`）、「日租金」（`rent_day_price`）三列；② 订单详情抽屉顶部新增车辆图片（`image_url`，`el-image` 点击放大预览，无图片时展示空状态占位）；抽屉宽度 480→520px | 构建通过；已确认订单列表/详情数据含 `uid`、`rent_day`、`rent_day_price`、`image_url` 字段，无需改后端 SQL |
 | v1.6.10 | 2026-10-17 | 后台支持修改订单取车/还车地址：① `admin.model` 新增 `updateOrderAddress(id, {pickup_address?, return_address?})`（动态 SET，支持单字段更新）；② 新增接口 `PUT /admin-api/orders/:id/address`，校验非空 trim、≤100 字符（与 `pp_order` 两列 varchar(100) 一致）；③ `admin-web` 订单详情抽屉底部新增「修改取车/还车地址」按钮 + 弹窗（100 字计数，保存后即时刷新详情与列表） | 实测：双字段更新、仅更新取车地址、空值拦截 400、不存在订单 404 均正常；测试订单(#41)地址已还原 |
 | v1.6.11 | 2026-10-17 | 退款闭环：① 修复 `WechatPayV2.refund/orderQuery/closeOrder/getAppParams` 误用不存在的 `config.appId`（应为 `appid`，否则退款签名参数缺失必然失败），退款增加 `return_code/result_code` 校验与缺证书时的明确报错；② 新增 `src/services/refund.service.js` 统一退款流程——调微信 `secapi/pay/refund`（p12 证书）成功后再由 `order.model.markOrderRefunded` 落库 `pay_status=2`（已退款）+ `order_status=4`（已取消），失败不改状态；③ 管理端 `POST /admin-api/orders/:id/refund`（**不校验订单状态**，支持全额/部分退款）+ 后台订单详情「退款」按钮与弹窗（金额/原因）；④ 小程序端 `POST /cancelRefund`（校验归属 uid + `pay_status=1` + `order_status=0`，仅未取车可退） | 实测：缺证书时返回明确错误不崩溃；C 端 403/400/404 校验均生效；`markOrderRefunded` 落库 pay_status=2、order_status=4 正确（测试后已还原）。**已实测**：对真实已支付订单 `PP20261017215847`（￥301.00）走后台退款，微信返回退款单号 `50302308702026101745339735830`，订单自动置为 `pay_status=2` + `order_status=4`；已退款订单再次发起 C 端退款被拦截为 `400 订单已退款`。**待办：服务器（Node 18+）需部署 PEM 证书** |
+| v1.6.12 | 2026-10-18 | 租用天数与金额口径治理：① 新增 `src/services/pricing.service.js` 作为唯一计价入口——**天数 = 时长÷24h 向上取整且≥1 天**（原为小时比例小数，会少收钱），日租金取 `promotion_day_price`（为空回退 `day_price`），保险/司机按白名单（保险 `0/1/120`、司机 `0/400`）校验；② `/checkout` 与 `/createOrder` 共用该服务，**下单时金额由服务端重算，不再采信前端传价**（修复构造请求改价的漏洞）；③ 校验还车时间须晚于取车时间 | 实测：24h→1 天、25h→2 天、23h→1 天、36h→2 天、49h→3 天；时间倒挂/相同/非法、保险传 9999 均返回 400；构造 `total_price=0.01 & rentDay=99` 的下单请求，落库为服务端算的 rent_day=2 / total_price=4603（测试订单已删除） |
 | v1.6.11 | 2026-10-17 | 退款证书加载兼容：Node 17+ 的 OpenSSL 3 拒绝微信 p12 的老式 RC2 加密（`Unsupported PKCS12 PFX data`），config 新增 `WX_CERT_PATH`/`WX_KEY_PATH` 与 `hasCert()`，`request()` 改为 **PEM(cert/key) 优先、p12 兜底** | 实测：PEM 方式发起退款，微信受理并返回 `ORDERNOTEXIST`（未支付订单的业务错误），证明证书双向认证与签名链路通；p12 方式在 Node 24 下确认报 RC2 不受支持 |

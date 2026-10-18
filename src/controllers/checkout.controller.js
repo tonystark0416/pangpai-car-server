@@ -3,6 +3,7 @@
  * 一般在提交订单前在结算页面调用
  */
 const car = require('../models/car.model');
+const pricing = require('../services/pricing.service');
 
 /**
  * 结算计价
@@ -25,41 +26,30 @@ async function checkout(req, res) {
   }
 
   const data = await car.getCarInfo(carId);
+  if (!data) {
+    return res.json({ code: 400, msg: '车辆不存在，无法结算' });
+  }
 
-  // 计价
-  const rent_day_price = data.promotion_day_price; // 每日租金
-  const rentDay = (returnTime - pickUpTime) / (1000 * 60 * 60 * 24); // 租车天数
-  const rent_total_price = rent_day_price * rentDay; // 车辆租金
-  const clean_price = 1; // 整备费用
-  const server_day_price = insurancePrice; // 保险一日费用
-  const server_total_price = server_day_price * rentDay; // 保险总费用
-  const door_pickup_price = 0;
-  const door_return_price = 0;
-  const driver_total_price = driver_price * rentDay;
-  const total_price =
-    rent_total_price + clean_price + server_total_price + door_pickup_price + door_return_price + driver_total_price;
+  // v1.6.12：统一走计价服务——天数按 24h 向上取整且至少 1 天，金额由服务端计算
+  let price;
+  try {
+    price = await pricing.calcOrderPrice({ carId, pickUpTime, returnTime, insurancePrice, driverPrice: driver_price });
+  } catch (error) {
+    if (pricing.isPriceError(error)) {
+      return res.json({ code: 400, msg: error.message });
+    }
+    throw error;
+  }
 
-  const result = {
+  // 响应结构与前端旧约定保持一致（可直接作为 createOrder 的 checkOutArray）
+  res.json({
     uid: uid,
     contact_phone: contact_phone,
     data: data,
-    rent_day_price,
-    rentDay,
-    rent_total_price,
-    clean_price,
-    server_day_price,
-    server_total_price,
-    door_pickup_price,
-    door_return_price,
-    driver_price,
-    driver_total_price,
-    total_price,
+    ...price,
     pickUpAddress,
     returnAddress,
-    pickUpTime,
-    returnTime,
-  };
-  res.json(result);
+  });
 }
 
 /**

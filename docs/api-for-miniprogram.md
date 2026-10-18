@@ -94,8 +94,10 @@
 | 方法 / 路径 | `GET /checkout` |
 | 参数 | `uid`（必填）、`carId`（必填）、`pickUpTime`（毫秒时间戳）、`returnTime`（毫秒时间戳）、`pickUpAddress`、`returnAddress`、`contact_phone`、`insurancePrice`（保险单价/天）、`driver_price`（司机单价/天） |
 | 成功 | 裸对象（无 code 包裹）：`{uid, contact_phone, data:{车辆对象}, rent_day_price, rentDay, rent_total_price, clean_price(整备费=1), server_day_price, server_total_price, door_pickup_price, door_return_price, driver_price, driver_total_price, total_price, pickUpAddress, returnAddress, pickUpTime, returnTime}` |
-| 失败 | `{code:-1, msg:'参数缺失'}` |
+| 失败 | `{code:-1, msg:'参数缺失'}` / `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"保险金额不合法，可选值：0 / 1 / 120"}` / `400 {"code":400,"msg":"车辆不存在，无法结算"}` |
 | 备注 | **本接口的返回对象可直接作为 `/createOrder` 的 `checkOutArray` 传入**（字段名已对齐） |
+| **v1.6.12 计算口径** | **租用天数 = 时长 ÷ 24 小时向上取整，且至少 1 天**（例：相差 25 小时算 **2 天**，相差 23 小时算 **1 天**，`rentDay` 现为整数）。此前为按小时比例的小数（如 1.333 天），请确认前端展示无小数位依赖 |
+| **v1.6.12 金额来源** | 金额由服务端按车辆实时价重算，与前端传参无关；`insurancePrice`、`driver_price` 仅作为**选项**输入并校验白名单（保险 `0/1/120`、司机 `0/400`，与 `/getInsurancePrice`、`/getDriverPrice` 的输出一致） |
 
 ### 3.2 保险价格档位
 
@@ -126,8 +128,10 @@
 | 请求体 | `{ "checkOutArray": { ...`/checkout` 返回的整个对象... } }`，其中必含 `uid`、`data.id`（车辆 id） |
 | 成功 | `{message:'数据接收成功', result:{id, order_sn, uid, car_id, total_price, pay_status:0, order_status:0, ...}}` ← **成功响应不带 `code`** |
 | 失败（v1.6.8 新增） | `400 {"code":400,"msg":"该车辆已下架，暂不可预订"}` / `400 {"code":400,"msg":"车辆不存在，无法下单"}` / `500 {"code":500,"msg":"订单创建失败"}` |
+| 失败（**v1.6.12 新增**） | `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"保险金额不合法，可选值：0 / 1 / 120"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` |
 | 参数缺失 | `400 {"code":400,"msg":"参数缺失：缺少 checkOutArray 或 uid"}` |
 | 前端判断 | **先判断 `res.code === 400` → 提示 `res.msg` 并返回列表刷新；否则取 `res.result.order_sn` 继续支付** |
+| **v1.6.12 金额以服务端为准** | 天数、日租金、各项金额、总价**全部由服务端重算**，忽略 `checkOutArray` 里传来的 `rentDay` / `rent_total_price` / `total_price` 等。以订单详情 `/getOrderDetail` 或 `result` 返回的实际金额为准进行支付，**勿用本地计算值**（两者不一致时会支付失败） |
 
 ### 4.2 订单列表
 
@@ -237,6 +241,8 @@
 | v1.6.11 | 2026-10-17 | `POST /cancelRefund`（新增） | 小程序端自助退款接口：**校验订单归属 + 仅「已支付 & 未取车」可退**，成功后订单变「已退款 + 已取消」 | **需要**：订单详情页增加「取消订单并退款」入口，按 `res.code === 200` 判断成功、`res.msg` 提示失败 |
 | v1.6.11 | 2026-10-17 | `POST /applyRefund`（**接口已删除**） | 该接口是微信退款 API 的裸透传：不校验订单状态、**退款后不更新订单 pay_status/order_status**（会导致钱退了订单仍是「已支付/待取车」），已下线。退款请用 `POST /cancelRefund` | **需要**：若前端曾接入该接口，必须改为 `/cancelRefund`（旧接口现返回 404） |
 | v1.6.11 | 2026-10-17 | `GET /getWxPay` | 更正说明：`totalFee` 单位是**分**（此前文档误写为元；代码与支付回调金额核验口径一直是「分」） | 否（若此前按「元」传参请改为「分」） |
+| v1.6.12 | 2026-10-18 | `GET /checkout` | 租用天数改为**按 24 小时向上取整且至少 1 天**（`rentDay` 变整数）；时间倒挂/取还相同/时间非法/保险或司机金额不在白名单均返回 `400 + msg` | **需要**：① 若有依赖小数天数的展示请改为整数；② 新增的 400 错误按 `res.msg` 提示用户 |
+| v1.6.12 | 2026-10-18 | `POST /createOrder` | **金额改由服务端重算**，忽略前端传来的 `rentDay`/`rent_total_price`/`total_price`；新增时间与金额白名校验的 400 错误 | **需要**：支付前务必用 `result`（或 `/getOrderDetail`）返回的 `total_price` 下单支付，**不要**用本地计算值，否则支付回调金额核验会失败 |
 |---|---|---|---|---|
 | v1.6.8 | 2026-10-17 | `POST /createOrder` | 下单前校验车辆上架状态：已下架 → `400 该车辆已下架，暂不可预订`；车辆不存在 → `400 车辆不存在，无法下单`；写入失败 → `500` | **需要**：下单失败判断改为先看 `res.code === 400` 并提示 `res.msg` |
 | v1.6.7 | 2026-10-17 | `GET /getCarList` | ① 仅返回上架车辆（`status=1`）；② 排序改为后端按 `sort` 升序；③ 车辆对象新增 `status`、`sort` 字段 | **需要**：移除前端本地排序逻辑，按返回顺序渲染 |
