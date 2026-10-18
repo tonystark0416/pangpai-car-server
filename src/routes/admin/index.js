@@ -35,6 +35,8 @@ router.delete('/cars/:id', asyncHandler(car.remove));
 
 // 订单管理
 router.get('/orders', asyncHandler(order.list));
+// 导出 Excel（须在 /orders/:id 之前注册，否则会被当作 id 匹配）
+router.get('/orders/export', asyncHandler(order.exportOrders));
 router.get('/orders/:id', asyncHandler(order.detail));
 router.put('/orders/:id/status', asyncHandler(order.updateStatus));
 router.put('/orders/:id/address', asyncHandler(order.updateAddress));

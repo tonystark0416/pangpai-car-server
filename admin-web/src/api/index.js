@@ -17,6 +17,10 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => {
+    // 文件下载类请求（responseType=blob）直接返回原始响应，由业务侧处理二进制流
+    if (response.config.responseType === 'blob') {
+      return response;
+    }
     const data = response.data;
     if (data.code === 0) {
       return data.data;

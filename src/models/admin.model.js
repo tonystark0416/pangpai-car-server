@@ -2,6 +2,7 @@
  * 管理后台数据层：管理员 / 用户 / 车辆 / 订单 的管理端查询
  */
 const MySQL = require('../utils/mysql.js');
+const dayjs = require('dayjs');
 
 function pageParams(page = 1, pageSize = 10) {
   return {
@@ -187,9 +188,8 @@ async function deleteCar(id) {
 
 /* ================= 订单管理 ================= */
 
-async function getOrderList({ page = 1, pageSize = 10, pay_status, order_status, keyword = '' }) {
-  const { offset, pageSize: size } = pageParams(page, pageSize);
-  const db = new MySQL();
+/** 构造订单查询条件（列表与导出共用，保证两边口径一致） */
+function buildOrderWhere({ pay_status, order_status, keyword = '' }) {
   const conditions = [];
   const params = [];
 
@@ -206,6 +206,13 @@ async function getOrderList({ page = 1, pageSize = 10, pay_status, order_status,
     params.push(`%${keyword}%`, `%${keyword}%`);
   }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  return { where, params };
+}
+
+async function getOrderList({ page = 1, pageSize = 10, pay_status, order_status, keyword = '' }) {
+  const { offset, pageSize: size } = pageParams(page, pageSize);
+  const db = new MySQL();
+  const { where, params } = buildOrderWhere({ pay_status, order_status, keyword });
 
   try {
     const rows = await db.query(
@@ -277,6 +284,86 @@ async function updateOrderAddress(id, { pickup_address, return_address }) {
 
 /* ================= 概览统计 ================= */
 
+/**
+ * 近 N 日订单统计（v1.6.13，用于概览页趋势）
+ * 按 create_time 分组统计每日「订单数 / 已支付数 / 已支付金额」，并补齐无订单的日期
+ * @param {number} days 天数，默认 7
+ * @returns {Array<{date, weekday, orderTotal, paidCount, paidAmount}>} 按日期升序（最早在前）
+ */
+async function getRecentOrderStats(days = 7) {
+  const db = new MySQL();
+  try {
+    const rows = await db.query(
+      `SELECT DATE(create_time) AS date,
+              COUNT(*) AS order_total,
+              SUM(CASE WHEN pay_status = 1 THEN 1 ELSE 0 END) AS paid_count,
+              IFNULL(SUM(CASE WHEN pay_status = 1 THEN total_price ELSE 0 END), 0) AS paid_amount
+       FROM pp_order
+       WHERE create_time >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+       GROUP BY DATE(create_time)
+       ORDER BY date ASC`,
+      [days - 1]
+    );
+
+    const weekNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const map = new Map();
+    rows.forEach((r) => {
+      // mysql2 对 DATE() 返回 Date 对象，统一格式化为 YYYY-MM-DD
+      const d = r.date instanceof Date ? dayjs(r.date).format('YYYY-MM-DD') : String(r.date);
+      map.set(d, r);
+    });
+
+    const result = [];
+    const today = dayjs().startOf('day');
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const d = today.subtract(i, 'day');
+      const key = d.format('YYYY-MM-DD');
+      const row = map.get(key);
+      result.push({
+        date: key,
+        weekday: weekNames[d.day()],
+        orderTotal: row ? Number(row.order_total) : 0,
+        paidCount: row ? Number(row.paid_count) : 0,
+        paidAmount: row ? Number(row.paid_amount) : 0,
+      });
+    }
+    // 无数据时前端需要区分「加载中/无数据」，这里一并给出合计
+    const summary = result.reduce(
+      (acc, cur) => ({
+        orderTotal: acc.orderTotal + cur.orderTotal,
+        paidCount: acc.paidCount + cur.paidCount,
+        paidAmount: acc.paidAmount + cur.paidAmount,
+      }),
+      { orderTotal: 0, paidCount: 0, paidAmount: 0 }
+    );
+    return { list: result, summary };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * 导出订单（v1.6.13）
+ * 与列表共用筛选条件，但不分页；用上限保护内存
+ * @param {object} params 筛选条件 {pay_status, order_status, keyword}
+ * @param {number} limit 最大导出条数，默认 20000
+ */
+async function getOrderExportList(params = {}, limit = 20000) {
+  const db = new MySQL();
+  const { where, params: bind } = buildOrderWhere(params);
+  try {
+    const rows = await db.query(
+      `SELECT o.*, c.car_name FROM pp_order o
+       LEFT JOIN pp_car c ON c.id = o.car_id
+       ${where} ORDER BY o.id DESC LIMIT ?`,
+      [...bind, limit]
+    );
+    return rows;
+  } finally {
+    db.close();
+  }
+}
+
 async function getDashboardStats() {
   const db = new MySQL();
   try {
@@ -320,4 +407,6 @@ module.exports = {
   updateOrderStatus,
   updateOrderAddress,
   getDashboardStats,
+  getRecentOrderStats,
+  getOrderExportList,
 };

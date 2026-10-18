@@ -19,6 +19,17 @@
         <el-form-item>
           <el-button type="primary" @click="load">查询</el-button>
         </el-form-item>
+        <el-form-item>
+          <el-dropdown trigger="click" @command="handleExport">
+            <el-button type="success" :loading="exporting">导出 Excel</el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="filtered">按当前筛选条件导出</el-dropdown-item>
+                <el-dropdown-item command="all">导出全部订单</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </el-form-item>
       </el-form>
     </el-card>
 
@@ -217,6 +228,44 @@ async function load() {
 async function openDetail(row) {
   detail.value = await api.get(`/orders/${row.id}`);
   detailVisible.value = true;
+}
+
+const exporting = ref(false);
+
+/**
+ * 导出 Excel（v1.6.13）
+ * filtered=按当前筛选条件；all=忽略条件导出全部
+ */
+async function handleExport(scope) {
+  const params = { scope };
+  if (scope === 'filtered') {
+    // 与列表加载同源，保证导出内容和页面上看到的筛选结果一致
+    if (query.keyword) params.keyword = query.keyword;
+    if (query.pay_status !== '') params.pay_status = query.pay_status;
+    if (query.order_status !== '') params.order_status = query.order_status;
+  }
+  exporting.value = true;
+  try {
+    const res = await api.get('/orders/export', { params, responseType: 'blob', timeout: 60000 });
+    const blob = res.data;
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    // 从响应头取文件名，取不到则本地生成
+    const disposition = res.headers['content-disposition'] || '';
+    const match = /filename\*=UTF-8''(.+)/.exec(disposition);
+    a.href = url;
+    a.download = match ? decodeURIComponent(match[1]) : `订单导出_${new Date().getTime()}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+    ElMessage.success('导出成功');
+  } catch (e) {
+    // 拦截器已对非 blob 错误做提示，这里仅处理 blob 类型的解析失败
+    ElMessage.error('导出失败，请稍后重试');
+  } finally {
+    exporting.value = false;
+  }
 }
 
 function openStatus(row) {

@@ -3,9 +3,15 @@
  */
 const adminModel = require('../../models/admin.model');
 const refundService = require('../../services/refund.service');
+const ExcelJS = require('exceljs');
+const dayjs = require('dayjs');
 
 // 履约状态合法值
 const ORDER_STATUS = [0, 1, 2, 3, 4];
+
+// 导出 Excel 用的中文文案（对应 pay_status / order_status）
+const PAY_STATUS_TEXT = { 0: '未支付', 1: '已支付', 2: '已退款' };
+const ORDER_STATUS_TEXT = { 0: '待取车', 1: '已取车', 2: '已还车', 3: '已完成', 4: '已取消' };
 
 async function list(req, res) {
   const { page, pageSize, pay_status, order_status, keyword } = req.query;
@@ -95,9 +101,83 @@ async function refund(req, res) {
   }
 }
 
-async function stats(req, res) {
-  const data = await adminModel.getDashboardStats();
-  res.json({ code: 0, data });
+/**
+ * 导出订单 Excel（v1.6.13）
+ * GET /orders/export?pay_status=&order_status=&keyword=&scope=
+ * scope=all 时忽略筛选条件导出全部（≤20000 条），否则按当前筛选条件导出
+ * 说明：导出条件与列表同源（admin.model.buildOrderWhere），保证口径一致
+ */
+async function exportOrders(req, res) {
+  const { pay_status, order_status, keyword, scope } = req.query;
+  const useAll = scope === 'all';
+  const rows = await adminModel.getOrderExportList({
+    pay_status: useAll ? undefined : pay_status,
+    order_status: useAll ? undefined : order_status,
+    keyword: useAll ? '' : keyword || '',
+  });
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = '庞派汽车管理后台';
+  wb.created = new Date();
+  const ws = wb.addWorksheet('订单');
+
+  ws.columns = [
+    { header: '订单号', key: 'order_sn', width: 22 },
+    { header: '用户ID', key: 'uid', width: 10 },
+    { header: '联系电话', key: 'contact_phone', width: 14 },
+    { header: '车辆', key: 'car_name', width: 20 },
+    { header: '租车天数', key: 'rent_day', width: 10 },
+    { header: '日租金', key: 'rent_day_price', width: 10 },
+    { header: '订单总额', key: 'total_price', width: 12 },
+    { header: '支付状态', key: 'pay_status_text', width: 10 },
+    { header: '履约状态', key: 'order_status_text', width: 12 },
+    { header: '取车时间', key: 'pickup_time_text', width: 20 },
+    { header: '还车时间', key: 'return_time_text', width: 20 },
+    { header: '取车地址', key: 'pickup_address', width: 28 },
+    { header: '还车地址', key: 'return_address', width: 28 },
+    { header: '创建时间', key: 'create_time_text', width: 20 },
+  ];
+  ws.getRow(1).font = { bold: true };
+  ws.views = [{ state: 'frozen', ySplit: 1 }]; // 冻结表头
+
+  const fmtTime = (v) => (v ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '');
+  rows.forEach((r) => {
+    ws.addRow({
+      order_sn: r.order_sn,
+      uid: r.uid,
+      contact_phone: r.contact_phone,
+      car_name: r.car_name || '',
+      rent_day: Number(r.rent_day),
+      rent_day_price: Number(r.rent_day_price),
+      total_price: Number(r.total_price),
+      pay_status_text: PAY_STATUS_TEXT[r.pay_status] ?? String(r.pay_status),
+      order_status_text: ORDER_STATUS_TEXT[r.order_status] ?? String(r.order_status),
+      // 取还时间为毫秒时间戳字符串
+      pickup_time_text: fmtTime(Number(r.pickup_time) || r.pickup_time),
+      return_time_text: fmtTime(Number(r.return_time) || r.return_time),
+      pickup_address: r.pickup_address || '',
+      return_address: r.return_address || '',
+      create_time_text: fmtTime(r.create_time),
+    });
+  });
+
+  const filename = `订单导出_${dayjs().format('YYYYMMDDHHmmss')}.xlsx`;
+  res.setHeader(
+    'Content-Type',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  );
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  await wb.xlsx.write(res);
+  res.end();
 }
 
-module.exports = { list, detail, updateStatus, updateAddress, refund, stats };
+async function stats(req, res) {
+  // v1.6.13：概览页同时返回今日数据与近 7 日趋势
+  const [data, recent7Days] = await Promise.all([
+    adminModel.getDashboardStats(),
+    adminModel.getRecentOrderStats(7),
+  ]);
+  res.json({ code: 0, data: { ...data, recent7Days } });
+}
+
+module.exports = { list, detail, updateStatus, updateAddress, refund, exportOrders, stats };
