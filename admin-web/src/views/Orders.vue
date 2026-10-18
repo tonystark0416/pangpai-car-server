@@ -46,8 +46,23 @@
         <el-table-column label="租车天数" width="90">
           <template #default="{ row }">{{ row.rent_day }} 天</template>
         </el-table-column>
-        <el-table-column label="日租金" width="100">
+        <el-table-column label="日租金单价" width="100">
           <template #default="{ row }">￥{{ row.rent_day_price }}</template>
+        </el-table-column>
+        <el-table-column label="车辆租金合计" width="110">
+          <template #default="{ row }">￥{{ row.rent_total_price }}</template>
+        </el-table-column>
+        <el-table-column label="保险费单价" width="100">
+          <template #default="{ row }">￥{{ row.server_day_price }}</template>
+        </el-table-column>
+        <el-table-column label="保险费合计" width="100">
+          <template #default="{ row }">￥{{ row.server_total_price }}</template>
+        </el-table-column>
+        <el-table-column label="司机单价" width="100">
+          <template #default="{ row }">￥{{ row.driver_price || 0 }}</template>
+        </el-table-column>
+        <el-table-column label="司机合计" width="100">
+          <template #default="{ row }">￥{{ row.driver_total_price || 0 }}</template>
         </el-table-column>
         <el-table-column label="总价" width="100">
           <template #default="{ row }">￥{{ row.total_price }}</template>
@@ -63,6 +78,12 @@
               {{ orderStatusText(row.order_status) }}
             </el-tag>
           </template>
+        </el-table-column>
+        <el-table-column label="微信支付单号" width="220">
+          <template #default="{ row }">{{ row.transaction_id || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="支付时间" width="170">
+          <template #default="{ row }">{{ row.pay_time ? formatDateTime(row.pay_time) : '-' }}</template>
         </el-table-column>
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.create_time) }}</template>
