@@ -60,7 +60,34 @@ function genOrderSn() {
  * 获取订单列表
  * @param {int} pageNumber
  */
-async function getOrderList(uid, pageNumber) {
+// 状态合法值白名单（v1.6.17 筛选用，非法值直接忽略而非报错，保证向后兼容）
+const PAY_STATUS_VALUES = [0, 1, 2];           // 0未支付 1已支付 2已退款
+const ORDER_STATUS_VALUES = [0, 1, 2, 3, 4];    // 0待取车 1已取车 2已还车 3已完成 4已取消
+
+/**
+ * 解析多选状态参数：支持 "0" / "0,1" / "0, 1" / [0,1]
+ * 只保留白名单内的整数，非法值忽略；全部非法时返回空数组（= 不加该筛选条件）
+ */
+function parseStatusFilter(value, allowed) {
+    if (value === undefined || value === null || value === '') return [];
+    const arr = Array.isArray(value) ? value : String(value).split(',');
+    const list = [];
+    arr.forEach((v) => {
+        const n = Number(String(v).trim());
+        if (Number.isInteger(n) && allowed.includes(n) && !list.includes(n)) list.push(n);
+    });
+    return list;
+}
+
+/**
+ * 获取订单列表
+ * v1.6.17：支持按 支付状态 / 履约状态 筛选（SQL 层筛选，保证是全局筛选而非当前页过滤）
+ * @param {int|string} uid 用户ID
+ * @param {int|string} pageNumber 页码（从 1 开始）
+ * @param {object} [filters] 可选筛选 { pay_status, order_status }，支持逗号分隔多值，非法值忽略
+ * @returns {{list: Array, total: number}} | -1（页码为 0）
+ */
+async function getOrderList(uid, pageNumber, filters = {}) {
     //校验页码，不能为0
     if (pageNumber == 0) {
         console.log('页码不能为0');
@@ -69,10 +96,32 @@ async function getOrderList(uid, pageNumber) {
     const pageSize = 10; // 每页显示的记录数
     const offset = (pageNumber - 1) * pageSize; // 计算偏移量
     const db = new MySQL();
-    const sqlGetOrderList = 'select * from pp_order where uid = ? order by create_time desc limit ?,?';
+
+    const payList = parseStatusFilter(filters.pay_status, PAY_STATUS_VALUES);
+    const orderList = parseStatusFilter(filters.order_status, ORDER_STATUS_VALUES);
+
+    const where = ['uid = ?'];
+    const params = [uid];
+    if (payList.length) {
+        where.push(`pay_status IN (${payList.map(() => '?').join(',')})`);
+        params.push(...payList);
+    }
+    if (orderList.length) {
+        where.push(`order_status IN (${orderList.map(() => '?').join(',')})`);
+        params.push(...orderList);
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
     try {
-        const res = await db.query(sqlGetOrderList, [uid, offset, pageSize]);
-        return res;
+        const res = await db.query(
+            `select * from pp_order ${whereSql} order by create_time desc limit ?,?`,
+            [...params, offset, pageSize]
+        );
+        const [countRow] = await db.query(
+            `select COUNT(*) AS total from pp_order ${whereSql}`,
+            params
+        );
+        return { list: res, total: Number(countRow.total) };
     } catch (error) {
         console.error(error);
     } finally {

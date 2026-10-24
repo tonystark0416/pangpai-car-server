@@ -50,11 +50,24 @@ async function createOrder(req, res) {
  * 分页查询订单列表接口
  * @method GET ?uid=&pageNumber=
  */
+/**
+ * 分页查询订单列表接口
+ * v1.6.17：新增可选筛选 pay_status / order_status（支持逗号分隔多值，非法值忽略）
+ * @method GET ?uid=&pageNumber=&pay_status=&order_status=
+ */
 async function getOrderList(req, res) {
-  const { uid, pageNumber } = req.query;
-  const result = await order.getOrderList(uid, pageNumber);
-  if (result && result[0]) {
-    res.json({ code: 200, result });
+  const { uid, pageNumber, pay_status, order_status } = req.query;
+  const result = await order.getOrderList(uid, pageNumber, { pay_status, order_status });
+  // result 为 -1（页码为 0）或空列表时都按「无订单数据」返回，保持与旧版一致
+  if (result && result.list && result.list.length) {
+    res.json({
+      code: 200,
+      result: result.list,
+      // v1.6.17 新增（可选字段，不影响老版本只取 result 的写法）
+      total: result.total,
+      page: Number(pageNumber) || 1,
+      pageSize: 10,
+    });
   } else {
     res.json({ code: 201, msg: '无订单数据' });
   }

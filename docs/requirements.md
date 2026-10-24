@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.16 ｜ 日期：2026-10-24 ｜ 状态：迭代中
+> 版本：v1.6.17 ｜ 日期：2026-10-25 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -131,6 +131,7 @@ pangpai-car/
 | `/createOrder` | POST | 创建订单，body 为 `{checkOutArray: {...结算结果}}`，缺参返回 400（**v1.6.12：金额取服务端重算结果，不采信前端传价**） |
 | `/getOrderList` | GET | 按 uid 分页查询订单 |
 | `/getOrderDetail` | GET | 按 orderSn + uid 查订单详情（含车辆信息、格式化时间） |
+| `/getOrderList` | GET | 分页查订单列表：`uid` + `pageNumber`；**v1.6.17 新增可选筛选** `pay_status` / `order_status`（支持逗号分隔多值、非法值忽略，不传等同旧行为），响应新增可选字段 `total`/`page`/`pageSize` |
 
 **计价公式**（`src/controllers/checkout.controller.js` 的 `checkout`，入参 `uid/contact_phone/carId/pickUpTime/returnTime/pickUpAddress/returnAddress/insurancePrice/driver_price`）：
 
@@ -331,3 +332,4 @@ pangpai-car/
 | v1.6.14 | 2026-10-18 | 补齐后台订单的费用与支付明细：① 订单列表新增「日租金单价、车辆租金合计、保险费单价、保险费合计、司机单价、司机合计、微信支付单号、支付时间」8 列（原有 联系电话/租车天数/总价 保留，原「日租金」改称「日租金单价」）；② 导出 Excel 同步补齐上述字段并新增「整备费」，共 22 列 | 实测：导出全部 44 条 / 22 列，回读校验表头与取值正确（样例 `PP20261017215847`：日租金单价99、租金合计297、保险费单价1/合计3、司机0、总额301、支付单号4500000565…、支付时间2026-10-17 21:58:52）；同时发现数据问题：部分订单 `contact_phone` 为字符串 `"undefined"`（小程序传参缺陷，非导出问题） |
 | v1.6.15 | 2026-10-24 | 用户体系拆分：庞派用户从共用表 `adp_user` / `adp_user_auth` / `adp_admin_user` 迁出到独立的 `pp_user` / `pp_user_auth` / `pp_admin_user`，adp_ 表保留给其他项目且**数据未做任何删除或修改**。迁移脚本 `scripts/migrate_user_to_pp.js`（先建库内备份表 + 导出离线 SQL，再 `CREATE TABLE ... LIKE` 建新表，按「有 pp 授权 ∪ 被 pp_order/pp_driver 引用」的口径迁移并**保留原主键 id**，幂等可重复执行补迁窗口期数据，最后校正 AUTO_INCREMENT）。代码侧替换 `user.model.js`（6 处 SQL）与 `admin.model.js`（11 处 SQL），`local-dev-init.sql` 同步改为建 pp_ 表 | 实测：备份表 63/62/1 行；迁入 pp_user 62 行、pp_user_auth 62 行、pp_admin_user 1 行；订单 7/45、驾驶证 1/2 关联成功（未关联的 uid 61/123 在**旧表本来就不存在**，属历史孤儿数据，非迁移丢失）；后台登录、用户列表、订单详情 join、小程序 openid 登录/新注册 全部正常 |
 | v1.6.16 | 2026-10-24 | 新增 C 端「取消订单」接口 `POST /cancelOrder`：仅用于**未支付**订单（不涉及资金），校验归属 uid + `pay_status=0` + `order_status=0`，通过后仅置 `order_status=4`（已取消）；`order.model.cancelUnpaidOrder` 的 UPDATE 条件自带状态断言，杜绝并发下误改已支付/已取车订单。与 `/cancelRefund` 按支付状态严格分流，避免「钱没退、单却取消了」 | 实测：未支付待取车 → 200 已取消且落库 order_status=4；重复取消 → 400 订单已取消；已支付订单 → 400 引导走 /cancelRefund；未支付已取车 → 400 提示联系客服；越权 403；不存在 404；缺参 400（测试订单已删除） |
+| v1.6.17 | 2026-10-25 | C 端 `GET /getOrderList` 支持状态筛选：新增可选入参 `pay_status` / `order_status`（支持逗号分隔多值，白名单外的值忽略），筛选在 **SQL 层**完成（全局筛选而非当前页过滤），不传参数行为与旧版完全一致；响应新增可选字段 `total` / `page` / `pageSize` 便于前端分页 | 实测：不传筛选 total=4 与旧版一致；`order_status=4` / `order_status=2,4` / `pay_status=1,2` 均命中 4 条；组合 `pay_status=2&order_status=4` 命中 3 条、`pay_status=1&order_status=4` 命中 1 条；非法值 `pay_status=99` 被忽略（total 仍为 4）；页码为 0 仍返回 201 |
