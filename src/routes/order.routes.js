@@ -16,4 +16,7 @@ router.get('/getOrderList', asyncHandler(orderController.getOrderList));
 // 查询订单详情
 router.get('/getOrderDetail', asyncHandler(orderController.getOrderDetail));
 
+// 取消订单（v1.6.16，仅未支付订单；已支付请走 /cancelRefund）
+router.post('/cancelOrder', asyncHandler(orderController.cancelOrder));
+
 module.exports = router;

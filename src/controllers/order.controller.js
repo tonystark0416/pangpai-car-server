@@ -74,8 +74,58 @@ async function getOrderDetail(req, res) {
   }
 }
 
+/**
+ * 取消订单（v1.6.16，仅用于**未支付**订单，不涉及资金）
+ *
+ * 与 POST /cancelRefund 的分工：
+ *   - 未支付 → 本接口，只把订单置为「已取消」
+ *   - 已支付 → /cancelRefund，走微信退款并置「已退款 + 已取消」
+ *
+ * @method POST body/query: { orderSn, uid }
+ */
+async function cancelOrder(req, res) {
+  const { orderSn, uid } = { ...req.query, ...(req.body || {}) };
+  if (!orderSn || !uid) {
+    return res.json({ code: 400, msg: '缺少参数：orderSn 或 uid' });
+  }
+
+  const orderInfo = await order.getOrderBySn(orderSn);
+  if (!orderInfo) {
+    return res.json({ code: 404, msg: '订单不存在' });
+  }
+  if (Number(orderInfo.uid) !== Number(uid)) {
+    return res.json({ code: 403, msg: '无权操作该订单' });
+  }
+
+  // 已支付订单必须走退款出口，避免「钱没退、单却取消了」
+  if (Number(orderInfo.pay_status) !== 0) {
+    const msg =
+      Number(orderInfo.pay_status) === 1
+        ? '订单已支付，请走退款流程 /cancelRefund'
+        : '订单已退款，无需取消';
+    return res.json({ code: 400, msg });
+  }
+  if (Number(orderInfo.order_status) === 4) {
+    return res.json({ code: 400, msg: '订单已取消' });
+  }
+  if (Number(orderInfo.order_status) !== 0) {
+    return res.json({ code: 400, msg: '订单已取车，无法取消，请联系客服' });
+  }
+
+  const affected = await order.cancelUnpaidOrder(orderSn, uid);
+  if (affected === 1) {
+    console.log('[order] 用户取消未支付订单成功:', orderSn);
+    return res.json({ code: 200, msg: '订单已取消', result: { order_sn: orderSn, order_status: 4 } });
+  }
+  if (affected === 0) {
+    return res.json({ code: 400, msg: '订单状态已变化，请刷新后重试' });
+  }
+  return res.json({ code: 500, msg: '取消订单失败，请稍后重试' });
+}
+
 module.exports = {
   createOrder,
   getOrderList,
   getOrderDetail,
+  cancelOrder,
 };

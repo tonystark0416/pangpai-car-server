@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.15 ｜ 日期：2026-10-24 ｜ 状态：迭代中
+> 版本：v1.6.16 ｜ 日期：2026-10-24 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -152,6 +152,7 @@ pangpai-car/
 | `/wxPayCallback` | POST | 微信支付异步回调（XML + MD5 验签） |
 | `/queryWxPayOrder` | GET | 微信支付查单（v1.1.0 新挂载，管理端用） |
 | `/cancelRefund` | POST | **小程序端退款**：body/query `{orderSn, uid}`，**校验状态：仅「已支付 + 未取车」可退**（v1.6.11） |
+| `/cancelOrder` | POST | **取消未支付订单**（v1.6.16，body/query `{orderSn, uid}`）：校验归属 uid + `pay_status=0` + `order_status=0`，仅置 `order_status=4`，**不涉及资金**；已支付订单会被拒绝并提示走 `/cancelRefund` |
 | ~~`/applyRefund`~~ | POST | **已删除（v1.6.11）**：原为微信退款 API 裸透传，不校验状态且退款后不改订单状态。管理端用 `/admin-api/orders/:id/refund`，小程序端用 `/cancelRefund` |
 
 **退款流程（v1.6.11 起闭环）**：
@@ -329,3 +330,4 @@ pangpai-car/
 | v1.6.13 | 2026-10-18 | 后台数据能力增强：① 概览新增「近 7 日订单数据」——`admin.model.getRecentOrderStats(7)` 按 `create_time` 统计每日订单数/已支付数/支付金额并补齐无订单日期，`GET /dashboard/stats` 一并返回 `recent7Days{list,summary}`；② 订单管理新增 Excel 导出——新增 `GET /admin-api/orders/export`（`exceljs` 生成 `.xlsx`，冻结表头，时间为可读格式，支付/履约状态输出中文），筛选条件与列表共用 `buildOrderWhere` 保证口径一致，支持 `scope=all` 直接导出全部，上限 20000 条；③ 后台订单页「导出 Excel」下拉按钮提供「按当前筛选条件导出 / 导出全部订单」；`api` 拦截器对 `responseType=blob` 放行以便二进制下载 | 实测：近 7 日返回连续 7 天并给出合计；按 `pay_status=1` 导出 1 条、导出全部 44 条，文件均可被 exceljs 正常解析（表头与首行数据校验通过），Content-Type 与 UTF-8 文件名响应头正确 |
 | v1.6.14 | 2026-10-18 | 补齐后台订单的费用与支付明细：① 订单列表新增「日租金单价、车辆租金合计、保险费单价、保险费合计、司机单价、司机合计、微信支付单号、支付时间」8 列（原有 联系电话/租车天数/总价 保留，原「日租金」改称「日租金单价」）；② 导出 Excel 同步补齐上述字段并新增「整备费」，共 22 列 | 实测：导出全部 44 条 / 22 列，回读校验表头与取值正确（样例 `PP20261017215847`：日租金单价99、租金合计297、保险费单价1/合计3、司机0、总额301、支付单号4500000565…、支付时间2026-10-17 21:58:52）；同时发现数据问题：部分订单 `contact_phone` 为字符串 `"undefined"`（小程序传参缺陷，非导出问题） |
 | v1.6.15 | 2026-10-24 | 用户体系拆分：庞派用户从共用表 `adp_user` / `adp_user_auth` / `adp_admin_user` 迁出到独立的 `pp_user` / `pp_user_auth` / `pp_admin_user`，adp_ 表保留给其他项目且**数据未做任何删除或修改**。迁移脚本 `scripts/migrate_user_to_pp.js`（先建库内备份表 + 导出离线 SQL，再 `CREATE TABLE ... LIKE` 建新表，按「有 pp 授权 ∪ 被 pp_order/pp_driver 引用」的口径迁移并**保留原主键 id**，幂等可重复执行补迁窗口期数据，最后校正 AUTO_INCREMENT）。代码侧替换 `user.model.js`（6 处 SQL）与 `admin.model.js`（11 处 SQL），`local-dev-init.sql` 同步改为建 pp_ 表 | 实测：备份表 63/62/1 行；迁入 pp_user 62 行、pp_user_auth 62 行、pp_admin_user 1 行；订单 7/45、驾驶证 1/2 关联成功（未关联的 uid 61/123 在**旧表本来就不存在**，属历史孤儿数据，非迁移丢失）；后台登录、用户列表、订单详情 join、小程序 openid 登录/新注册 全部正常 |
+| v1.6.16 | 2026-10-24 | 新增 C 端「取消订单」接口 `POST /cancelOrder`：仅用于**未支付**订单（不涉及资金），校验归属 uid + `pay_status=0` + `order_status=0`，通过后仅置 `order_status=4`（已取消）；`order.model.cancelUnpaidOrder` 的 UPDATE 条件自带状态断言，杜绝并发下误改已支付/已取车订单。与 `/cancelRefund` 按支付状态严格分流，避免「钱没退、单却取消了」 | 实测：未支付待取车 → 200 已取消且落库 order_status=4；重复取消 → 400 订单已取消；已支付订单 → 400 引导走 /cancelRefund；未支付已取车 → 400 提示联系客服；越权 403；不存在 404；缺参 400（测试订单已删除） |

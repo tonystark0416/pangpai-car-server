@@ -171,11 +171,34 @@ async function markOrderRefunded(order_sn) {
     }
 }
 
+/**
+ * 取消未支付订单（v1.6.16，C 端自助取消，不涉及资金）
+ * 仅把 order_status 置为 4（已取消）；条件里带上 pay_status=0 与 order_status=0，
+ * 保证已支付/已取车/已取消的订单不会被误改
+ * @param {string} order_sn 订单号
+ * @param {number} uid 下单用户（防止越权取消他人订单）
+ * @returns affectedRows：1=取消成功；0=订单不存在或状态不满足（已支付/已取车/已取消）
+ */
+async function cancelUnpaidOrder(order_sn, uid) {
+    const db = new MySQL();
+    const sqlCancel = 'UPDATE pp_order SET order_status = 4 WHERE order_sn = ? AND uid = ? AND pay_status = 0 AND order_status = 0';
+    try {
+        const res = await db.query(sqlCancel, [order_sn, uid]);
+        return res.affectedRows;
+    } catch (error) {
+        console.error('[order] cancelUnpaidOrder error:', error);
+        return -1;
+    } finally {
+        db.close();
+    }
+}
+
 module.exports = {
     createOrder,
     getOrderDetail,
     getOrderList,
     getOrderBySn,
+    cancelUnpaidOrder,
     markOrderPaid,
     markOrderRefunded,
 };
