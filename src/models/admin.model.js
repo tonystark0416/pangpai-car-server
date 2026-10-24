@@ -16,7 +16,7 @@ function pageParams(page = 1, pageSize = 10) {
 async function getAdminByUsername(username) {
   const db = new MySQL();
   try {
-    const res = await db.query('SELECT * FROM adp_admin_user WHERE username = ? LIMIT 1', [username]);
+    const res = await db.query('SELECT * FROM pp_admin_user WHERE username = ? LIMIT 1', [username]);
     return res[0];
   } finally {
     db.close();
@@ -27,7 +27,7 @@ async function getAdminById(id) {
   const db = new MySQL();
   try {
     const res = await db.query(
-      'SELECT id, username, nickname, role, status, last_login_at, create_time FROM adp_admin_user WHERE id = ? LIMIT 1',
+      'SELECT id, username, nickname, role, status, last_login_at, create_time FROM pp_admin_user WHERE id = ? LIMIT 1',
       [id]
     );
     return res[0];
@@ -39,7 +39,7 @@ async function getAdminById(id) {
 async function updateLastLogin(id) {
   const db = new MySQL();
   try {
-    await db.query('UPDATE adp_admin_user SET last_login_at = NOW() WHERE id = ?', [id]);
+    await db.query('UPDATE pp_admin_user SET last_login_at = NOW() WHERE id = ?', [id]);
   } finally {
     db.close();
   }
@@ -52,17 +52,17 @@ async function getUserList({ page = 1, pageSize = 10, keyword = '' }) {
   const db = new MySQL();
   const like = `%${keyword}%`;
   const where = keyword
-    ? 'WHERE u.phone LIKE ? OR u.nickname LIKE ? OR u.username LIKE ? OR EXISTS (SELECT 1 FROM adp_user_auth a WHERE a.user_id = u.id AND a.openid LIKE ?)'
+    ? 'WHERE u.phone LIKE ? OR u.nickname LIKE ? OR u.username LIKE ? OR EXISTS (SELECT 1 FROM pp_user_auth a WHERE a.user_id = u.id AND a.openid LIKE ?)'
     : '';
   const params = keyword ? [like, like, like, like] : [];
   try {
     const rows = await db.query(
       `SELECT u.*, (SELECT COUNT(*) FROM pp_order o WHERE o.uid = u.id) AS order_count,
-              (SELECT COUNT(*) FROM adp_user_auth a WHERE a.user_id = u.id) AS auth_count
-       FROM adp_user u ${where} ORDER BY u.id DESC LIMIT ?, ?`,
+              (SELECT COUNT(*) FROM pp_user_auth a WHERE a.user_id = u.id) AS auth_count
+       FROM pp_user u ${where} ORDER BY u.id DESC LIMIT ?, ?`,
       [...params, offset, size]
     );
-    const [{ total }] = await db.query(`SELECT COUNT(*) AS total FROM adp_user u ${where}`, params);
+    const [{ total }] = await db.query(`SELECT COUNT(*) AS total FROM pp_user u ${where}`, params);
     return { list: rows, total };
   } finally {
     db.close();
@@ -72,10 +72,10 @@ async function getUserList({ page = 1, pageSize = 10, keyword = '' }) {
 async function getUserDetail(id) {
   const db = new MySQL();
   try {
-    const [user] = await db.query('SELECT * FROM adp_user WHERE id = ? LIMIT 1', [id]);
+    const [user] = await db.query('SELECT * FROM pp_user WHERE id = ? LIMIT 1', [id]);
     if (!user) return null;
     const auths = await db.query(
-      'SELECT id, biz_code, openid, unionid, create_time FROM adp_user_auth WHERE user_id = ? ORDER BY id DESC',
+      'SELECT id, biz_code, openid, unionid, create_time FROM pp_user_auth WHERE user_id = ? ORDER BY id DESC',
       [id]
     );
     const [driver] = await db.query('SELECT * FROM pp_driver WHERE user_id = ? LIMIT 1', [id]);
@@ -239,7 +239,7 @@ async function getOrderDetail(id) {
     );
     if (!order) return null;
     if (order.uid) {
-      const [user] = await db.query('SELECT id, phone, nickname, username FROM adp_user WHERE id = ?', [
+      const [user] = await db.query('SELECT id, phone, nickname, username FROM pp_user WHERE id = ?', [
         order.uid,
       ]);
       order.userInfo = user || null;
@@ -367,7 +367,7 @@ async function getOrderExportList(params = {}, limit = 20000) {
 async function getDashboardStats() {
   const db = new MySQL();
   try {
-    const [userTotal] = await db.query('SELECT COUNT(*) AS v FROM adp_user');
+    const [userTotal] = await db.query('SELECT COUNT(*) AS v FROM pp_user');
     const [carTotal] = await db.query('SELECT COUNT(*) AS v FROM pp_car');
     const [orderTotal] = await db.query('SELECT COUNT(*) AS v FROM pp_order');
     const [orderPaid] = await db.query('SELECT COUNT(*) AS v FROM pp_order WHERE pay_status = 1');

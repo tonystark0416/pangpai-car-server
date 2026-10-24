@@ -34,7 +34,7 @@ DROP TABLE IF EXISTS pp_order;
 CREATE TABLE pp_order (
   id                 INT(10) NOT NULL AUTO_INCREMENT COMMENT '订单ID',
   order_sn           VARCHAR(50) NOT NULL COMMENT '订单号（PP+yyyyMMddHHmmss）',
-  uid                INT(10) NOT NULL COMMENT '下单用户ID（adp_user.id）',
+  uid                INT(10) NOT NULL COMMENT '下单用户ID（pp_user.id）',
   contact_phone      VARCHAR(20) NOT NULL COMMENT '联系电话',
   car_id             INT(10) NOT NULL COMMENT '车辆ID（pp_car.id）',
   rent_day           VARCHAR(5) NOT NULL COMMENT '租车天数（字符串）',
@@ -59,10 +59,10 @@ CREATE TABLE pp_order (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租车订单表';
 
 -- ------------------------------------------------------------
--- 用户表（多业务线统一用户）
+-- 用户表（v1.6.15 起庞派独立：原 adp_user 留给其他项目）
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS adp_user;
-CREATE TABLE adp_user (
+DROP TABLE IF EXISTS pp_user;
+CREATE TABLE pp_user (
   id           INT(10) NOT NULL AUTO_INCREMENT,
   biz_code     VARCHAR(11) DEFAULT NULL COMMENT '业务线编码',
   username     VARCHAR(20) DEFAULT NULL,
@@ -82,7 +82,7 @@ CREATE TABLE adp_user (
 DROP TABLE IF EXISTS pp_driver;
 CREATE TABLE pp_driver (
   id                   INT(5) NOT NULL AUTO_INCREMENT,
-  user_id              INT(5) NOT NULL COMMENT '用户id（adp_user.id）',
+  user_id              INT(5) NOT NULL COMMENT '用户id（pp_user.id）',
   driver_idcard_name   VARCHAR(10) DEFAULT NULL COMMENT '驾驶证姓名',
   driver_idcard_number VARCHAR(50) DEFAULT NULL COMMENT '驾驶证号',
   driver_idcard_url    VARCHAR(200) DEFAULT NULL COMMENT '驾驶证图片URL',
@@ -93,12 +93,12 @@ CREATE TABLE pp_driver (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='驾驶证信息表';
 
 -- ------------------------------------------------------------
--- 用户授权表（v1.4.0）：一个小程序一行，跨业务共享 adp_user
+-- 用户授权表（v1.4.0）：一个小程序一行；v1.6.15 起归属 pp_user
 -- ------------------------------------------------------------
-DROP TABLE IF EXISTS adp_user_auth;
-CREATE TABLE adp_user_auth (
+DROP TABLE IF EXISTS pp_user_auth;
+CREATE TABLE pp_user_auth (
   id          INT(10) NOT NULL AUTO_INCREMENT,
-  user_id     INT(10) NOT NULL COMMENT '关联 adp_user.id',
+  user_id     INT(10) NOT NULL COMMENT '关联 pp_user.id',
   biz_code    VARCHAR(11) NOT NULL DEFAULT 'pp' COMMENT '业务编码：pp=租车小程序',
   app_id      VARCHAR(32) DEFAULT NULL COMMENT '小程序appid（预留）',
   openid      VARCHAR(50) NOT NULL COMMENT '该小程序下的openid',

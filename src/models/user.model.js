@@ -12,8 +12,8 @@ const MySQL = require('../utils/mysql.js');
  */
 async function registerUser(biz_code, phone) {
     const db = new MySQL();
-    const sqlCheckUser = "select * from adp_user where phone = ?";
-    const sqlRegisterUser = "INSERT INTO adp_user (biz_code,phone) values (?,?)";
+    const sqlCheckUser = "select * from pp_user where phone = ?";
+    const sqlRegisterUser = "INSERT INTO pp_user (biz_code,phone) values (?,?)";
     try {
         const res = await db.query(sqlCheckUser, phone)
         if (res[0]) {
@@ -33,14 +33,14 @@ async function registerUser(biz_code, phone) {
 }
 
 /**
- * 根据 openid 自动注册/登录（v1.4.0 起走 adp_user_auth 授权表）
+ * 根据 openid 自动注册/登录（v1.4.0 起走 pp_user_auth 授权表）
  *
  * 查找顺序：
  * ① (biz_code, openid) 精确命中 → 直接返回用户
  * ② 提供 unionid 且 ①未命中 → 按 unionid 找到其他小程序的授权 → 复用同一 user_id（跨端自动关联）
- * ③ 均未命中 → 新建 adp_user + adp_user_auth
+ * ③ 均未命中 → 新建 pp_user + pp_user_auth
  *
- * @param {string} biz_code 业务编码（区分共用 adp_user 的多个小程序）
+ * @param {string} biz_code 业务编码（区分共用 pp_user 的多个小程序）
  * @param {string} openid 该小程序下的微信 openid
  * @param {string} [unionid] 微信 unionid（两个小程序同属一个开放平台时才有，暂无）
  * @returns 用户行 | undefined
@@ -48,12 +48,12 @@ async function registerUser(biz_code, phone) {
 async function registerUserByOpenid(biz_code, openid, unionid) {
     const db = new MySQL();
     const sqlSelectUserByAuth =
-        "SELECT u.* FROM adp_user u JOIN adp_user_auth a ON a.user_id = u.id WHERE a.biz_code = ? AND a.openid = ? LIMIT 1";
+        "SELECT u.* FROM pp_user u JOIN pp_user_auth a ON a.user_id = u.id WHERE a.biz_code = ? AND a.openid = ? LIMIT 1";
     const sqlSelectUserByUnionid =
-        "SELECT u.* FROM adp_user u JOIN adp_user_auth a ON a.user_id = u.id WHERE a.unionid = ? LIMIT 1";
-    const sqlInsertUser = "INSERT INTO adp_user (biz_code) values (?)";
+        "SELECT u.* FROM pp_user u JOIN pp_user_auth a ON a.user_id = u.id WHERE a.unionid = ? LIMIT 1";
+    const sqlInsertUser = "INSERT INTO pp_user (biz_code) values (?)";
     const sqlInsertAuth =
-        "INSERT INTO adp_user_auth (user_id, biz_code, openid, unionid) values (?,?,?,?)";
+        "INSERT INTO pp_user_auth (user_id, biz_code, openid, unionid) values (?,?,?,?)";
 
     try {
         // ① 按 (biz_code, openid) 查授权
@@ -78,7 +78,7 @@ async function registerUserByOpenid(biz_code, openid, unionid) {
         if (insertRes.insertId > 0) {
             await db.query(sqlInsertAuth, [insertRes.insertId, biz_code, openid, unionid || null]);
             console.log(`[user] 新账号注册成功（user_id=${insertRes.insertId}, biz=${biz_code}）`);
-            const checkRes = await db.query("SELECT * FROM adp_user WHERE id = ?", insertRes.insertId);
+            const checkRes = await db.query("SELECT * FROM pp_user WHERE id = ?", insertRes.insertId);
             return checkRes[0];
         }
     } catch (error) {

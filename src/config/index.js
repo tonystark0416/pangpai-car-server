@@ -37,7 +37,11 @@ const config = {
     secret: env('WX_SECRET'),
   },
 
-  /** 业务标识：区分共用 adp_user 的多个小程序（auth 表的 biz_code） */
+  /**
+   * 业务标识：auth 表的 biz_code
+   * v1.6.15：用户体系已拆分到 pp_user / pp_user_auth（原 adp_user 留给其他项目），
+   * 本字段保留用于区分同一用户在不同小程序下的授权行
+   */
   biz: {
     code: env('BIZ_CODE', 'pp'),
   },
