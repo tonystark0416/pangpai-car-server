@@ -7,7 +7,7 @@
 > - 文档维护约定：**任何涉及小程序端接口的改动，都必须同步更新本文件后再交付前端**（版本记录见文末 Change Log）
 > - **交付约定：改动涉及本文件所列接口时，必须向项目负责人明确报告「入参/出参是否有变动」，若前端需因此改代码（新增返回字段、新增错误码、字段类型/单位变化等）必须单独提醒其更新小程序**
 >
-> 适用版本：后端 **v1.6.12** ｜ 更新日期：2026-10-18
+> 适用版本：后端 **v1.7.0** ｜ 更新日期：2026-10-25
 
 ---
 
@@ -25,6 +25,58 @@
 ---
 
 ## 1. 登录与用户
+
+### 1.0 登录流程总览（v1.7.0 起：手机号为准）
+
+```
+        wx.login()  →  GET /getOpenid?code=        ← 拿到 openid(+unionid)，不注册
+                              ↓
+                    GET /tryLogin?openid=&unionid=  ← 只查不注册
+                              ↓
+              ┌───────────────┴───────────────┐
+     code=200（已绑定）                 code=202 needPhone:true（未绑定）
+              ↓                                 ↓
+   【老用户】直接用 result.id=uid      【新用户】前端弹手机号授权按钮
+     进首页（无需任何改动）            <button open-type="getPhoneNumber">
+                                                ↓ e.detail.code
+                                      GET /loginByPhone?code=&openid=&unionid=
+                                                ↓
+                                      手机号换号 → 注册 → 绑定 openid
+                                                ↓
+                                      code=200，result.id=uid → 存 uid 进首页
+```
+
+**A. 新用户（首次登录 / openid 未绑定）接口顺序**
+
+| 步骤 | 接口 | 关键返回 |
+|---|---|---|
+| 1 | `wx.login()`（前端 API） | `code` |
+| 2 | `GET /getOpenid?code=` | `result.openid`（建议一并把 `unionid` 留着） |
+| 3 | `GET /tryLogin?openid=&unionid=` | `202 {"needPhone":true}` → 转第 4 步 |
+| 4 | 前端 `<button open-type="getPhoneNumber">` | `e.detail.code`（一次性，勿缓存） |
+| 5 | `GET /loginByPhone?code=&openid=&unionid=` | `200`，`result.id` = uid |
+| 6 | 存 uid → 首页 | — |
+| 7 | 需要租车时：`/upload` → `/getIdCardInfo` → `/updateUserDriverInfo?uid=` | 驾驶证登记 |
+
+**B. 老用户（v1.7.0 前已 openid 绑定）接口顺序**
+
+| 步骤 | 接口 | 关键返回 |
+|---|---|---|
+| 1 | `wx.login()` → `GET /getOpenid?code=` | `result.openid` |
+| 2 | `GET /tryLogin?openid=&unionid=` | `200`，`result.id` = uid → 直接进首页（**行为同 v1.6.x，前端无需改动**） |
+| 3 | 可选：若 `result.phone` 为空，提示补手机号 → `GET /bindPhone?uid=&code=` | `200`，补齐后换设备也能靠手机号找回账号 |
+
+**C. 换设备 / 换微信号**：仍走 A 的 4~5 步，同一手机号会**登录回原 uid**（订单、驾驶证都在），并自动补绑新的 openid。
+
+**D. 登录后的业务调用顺序**
+
+```
+/getCarList → /getCarFee?carId= → /checkout → /createOrder(checkOutArray 整包)
+     → /getWxPay → wx.requestPayment → /getOrderList、/getOrderDetail
+     → 需要取消时：未支付 /cancelOrder，已支付未取车 /cancelRefund
+```
+
+> ⚠️ 判断新老用户**只看 `/tryLogin` 的 code**：`200` = 已注册直接进；`202` = 未注册走手机号授权。不要再用"是否返回 uid"以外的方式判断，也不要自己调接口创建用户。
 
 ### 1.1 换取 openid
 
@@ -339,11 +391,14 @@ async onGetPhone(e) {
 
 ## 7. 联调自测清单
 
-1. 登录：`wx.login()` → `/getOpenid` → `/tryLogin`；已注册直接拿 `uid`，新用户收 `202` → 手机号授权 → `/loginByPhone` 拿到 `uid`
-2. 车辆列表：`/getCarList?pageNum=1`，确认顺序与后台 sort 一致、下架车不出现
-3. 结算：`/checkout` 传入取还车时间（毫秒时间戳）→ 确认 `total_price` 正确
-4. 下单：`/checkout` 结果整包作为 `checkOutArray` → `/createOrder` → 拿到 `order_sn`
-5. 支付：`/getWxPay` → `wx.requestPayment` → `/queryWxPayOrder` 确认 `trade_state=SUCCESS`
-6. 订单：`/getOrderList`、`/getOrderDetail` 确认状态展示正确
-7. 认证：`/upload` → `/getIdCardInfo` → `/updateUserDriverInfo`（返回 `0` 即成功）
-8. 异常：下架某车后从历史入口下单，应收到 `400 该车辆已下架，暂不可预订`
+1. 登录（**老用户**）：`wx.login()` → `/getOpenid` → `/tryLogin` → 收 `200` 且 `result.id` 有值（行为与 v1.6.x 一致）
+2. 登录（**新用户**）：换一个从未注册过的微信号 → `/getOpenid` → `/tryLogin` 收 `202 needPhone:true`（**确认此时没有新建账号**）→ 手机号授权 → `/loginByPhone?code=&openid=` → 收 `200` 拿到 `uid`
+3. 换号验证：用**同一手机号**再换一个微信号授权 → `/loginByPhone` 返回的 `uid` 应与第 2 步**相同**，且该手机号下的订单/驾驶证都在
+4. 补手机号（老用户）：`/bindPhone?uid=&code=`，确认返回 `200`；再换设备用该手机号登录应回到同一 `uid`
+5. 车辆列表：`/getCarList?pageNum=1`，确认顺序与后台 sort 一致、下架车不出现
+6. 结算：`/checkout` 传入取还车时间（毫秒时间戳）→ 确认 `total_price` 正确
+7. 下单：`/checkout` 结果整包作为 `checkOutArray` → `/createOrder` → 拿到 `order_sn`
+8. 支付：`/getWxPay` → `wx.requestPayment` → `/queryWxPayOrder` 确认 `trade_state=SUCCESS`
+9. 订单：`/getOrderList`、`/getOrderDetail` 确认状态展示正确
+10. 认证：`/upload` → `/getIdCardInfo` → `/updateUserDriverInfo`（返回 `0` 即成功）
+11. 异常：下架某车后从历史入口下单，应收到 `400 该车辆已下架，暂不可预订`
