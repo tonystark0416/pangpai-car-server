@@ -93,20 +93,35 @@
 | 项 | 内容 |
 |---|---|
 | 方法 / 路径 | `GET /checkout` |
-| 参数 | `uid`（必填）、`carId`（必填）、`pickUpTime`（毫秒时间戳）、`returnTime`（毫秒时间戳）、`pickUpAddress`、`returnAddress`、`contact_phone`、`insurancePrice`（保险单价/天）、`driver_price`（司机单价/天） |
-| 成功 | 裸对象（无 code 包裹）：`{uid, contact_phone, data:{车辆对象}, rent_day_price, rentDay, rent_total_price, clean_price(整备费=1), server_day_price, server_total_price, door_pickup_price, door_return_price, driver_price, driver_total_price, total_price, pickUpAddress, returnAddress, pickUpTime, returnTime}` |
-| 失败 | `{code:-1, msg:'参数缺失'}` / `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"保险金额不合法，可选值：0 / 1 / 120"}` / `400 {"code":400,"msg":"车辆不存在，无法结算"}` |
+| 参数 | `uid`（必填）、`carId`（必填）、`pickUpTime`（毫秒时间戳）、`returnTime`（毫秒时间戳）、`pickUpAddress`、`returnAddress`、`contact_phone`、`driver_price`（司机单价/天）、**`insuranceLevel`（v1.6.18 新增）** |
+| 成功 | 裸对象（无 code 包裹）：`{uid, contact_phone, data:{车辆对象}, rent_day_price, rentDay, rent_total_price, clean_price, server_day_price, server_total_price, door_pickup_price, door_return_price, driver_price, driver_total_price, total_price, insurance_level, pickUpAddress, returnAddress, pickUpTime, returnTime}` |
+| 失败 | `{code:-1, msg:'参数缺失'}` / `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` / `400 {"code":400,"msg":"车辆不存在，无法结算"}` / `400 {"code":400,"msg":"车辆整备费配置异常，请联系客服"}` |
 | 备注 | **本接口的返回对象可直接作为 `/createOrder` 的 `checkOutArray` 传入**（字段名已对齐） |
-| **v1.6.12 计算口径** | **租用天数 = 时长 ÷ 24 小时向上取整，且至少 1 天**（例：相差 25 小时算 **2 天**，相差 23 小时算 **1 天**，`rentDay` 现为整数）。此前为按小时比例的小数（如 1.333 天），请确认前端展示无小数位依赖 |
-| **v1.6.12 金额来源** | 金额由服务端按车辆实时价重算，与前端传参无关；`insurancePrice`、`driver_price` 仅作为**选项**输入并校验白名单（保险 `0/1/120`、司机 `0/400`，与 `/getInsurancePrice`、`/getDriverPrice` 的输出一致） |
+| **v1.6.18 计价公式** | **总费用 = 车辆日租金 × 天数 + 保险日单价 × 天数 + 司机日单价 × 天数 + 整备费**。ⓘ **整备费是「按订单一次性」收取，不乘天数**；其余三项都乘天数 |
+| **v1.6.18 保险费来源** | 保险金额改为**按车辆配置**（后台车辆管理里配），`insuranceLevel` 传 `l1`（低档）/ `l2`（高档），**缺省或不传 = 低档 l1**。已**取消“不买保险”**，用户必须二选一 |
+| **v1.6.18 保险费兼容说明** | 旧参数 `insurancePrice`（传金额）不再作为金额使用：为兼容老版本，**金额 ≥100 视为 `l2`，否则视为 `l1`**，实际计费仍按车辆配置。**建议前端尽快改为传 `insuranceLevel`** |
+| **v1.6.12 计算口径** | **租用天数 = 时长 ÷ 24 小时向上取整，且至少 1 天**（例：相差 25 小时算 **2 天**，相差 23 小时算 **1 天**，`rentDay` 现为整数） |
+| **金额来源** | 金额由服务端按车辆实时价重算，与前端传参无关；`driver_price` 仅作为选项输入并校验白名单（`0/400`，与 `/getDriverPrice` 输出一致）；保险金额不再由前端决定 |
 
 ### 3.2 保险价格档位
 
 | 项 | 内容 |
 |---|---|
 | 方法 / 路径 | `GET /getInsurancePrice` |
-| 参数 | 无 |
-| 返回 | `{code:200, insurancePrice_l1:1, insurancePrice_l2:120}`（单位：元/天） |
+| 参数 | **`carId`（v1.6.18 起强烈建议传）**；不传返回系统默认档位金额 |
+| 返回 | `{code:200, insurancePrice_l1:100, insurancePrice_l2:200}`（单位：元/天，**实际值取该车的配置**） |
+| **v1.6.18 变更** | 金额不再是全局固定的 1 / 120，**改为每辆车单独配置**（后台「车辆管理」里改）。**保险必买**，前端不应再提供「不买保险」选项 |
+| 失败 | `400 {"code":400,"msg":"车辆不存在"}`（传了 carId 但车辆不存在时） |
+
+### 3.2.1 车辆费用配置 ⭐ v1.6.18 新增
+
+| 项 | 内容 |
+|---|---|
+| 方法 / 路径 | `GET /getCarFee` |
+| 参数 | `carId`（必填） |
+| 返回 | `{code:200, clean_price, insurancePrice_l1, insurancePrice_l2}` |
+| 说明 | 一次取到该车的**整备费**（一次性、不乘天数）与**两档保险日单价**，结算页可直接展示，无需分别调两个接口 |
+| 失败 | `400 {"code":400,"msg":"车辆不存在"}` |
 
 ### 3.3 司机服务价格
 
@@ -129,10 +144,11 @@
 | 请求体 | `{ "checkOutArray": { ...`/checkout` 返回的整个对象... } }`，其中必含 `uid`、`data.id`（车辆 id） |
 | 成功 | `{message:'数据接收成功', result:{id, order_sn, uid, car_id, total_price, pay_status:0, order_status:0, ...}}` ← **成功响应不带 `code`** |
 | 失败（v1.6.8 新增） | `400 {"code":400,"msg":"该车辆已下架，暂不可预订"}` / `400 {"code":400,"msg":"车辆不存在，无法下单"}` / `500 {"code":500,"msg":"订单创建失败"}` |
-| 失败（**v1.6.12 新增**） | `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"保险金额不合法，可选值：0 / 1 / 120"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` |
+| 失败（**v1.6.12 新增**） | `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` |
 | 参数缺失 | `400 {"code":400,"msg":"参数缺失：缺少 checkOutArray 或 uid"}` |
 | 前端判断 | **先判断 `res.code === 400` → 提示 `res.msg` 并返回列表刷新；否则取 `res.result.order_sn` 继续支付** |
 | **v1.6.12 金额以服务端为准** | 天数、日租金、各项金额、总价**全部由服务端重算**，忽略 `checkOutArray` 里传来的 `rentDay` / `rent_total_price` / `total_price` 等。以订单详情 `/getOrderDetail` 或 `result` 返回的实际金额为准进行支付，**勿用本地计算值**（两者不一致时会支付失败） |
+| **v1.6.18 保险档位以服务端为准** | 服务端按 checkOutArray 里的 `insurance_level`（`l1`/`l2`，缺省 l1）+ **该车的保险配置**重算保险费；前端传的 `server_day_price` / `server_total_price` 一律忽略。**请把 `/checkout` 返回的 `insurance_level` 原样带回**（即整包传 checkOutArray 即可，不要自行构造） |
 
 ### 4.2 订单列表
 
@@ -271,6 +287,10 @@
 | v1.6.8 | 2026-10-17 | `POST /createOrder` | 下单前校验车辆上架状态：已下架 → `400 该车辆已下架，暂不可预订`；车辆不存在 → `400 车辆不存在，无法下单`；写入失败 → `500` | **需要**：下单失败判断改为先看 `res.code === 400` 并提示 `res.msg` |
 | v1.6.7 | 2026-10-17 | `GET /getCarList` | ① 仅返回上架车辆（`status=1`）；② 排序改为后端按 `sort` 升序；③ 车辆对象新增 `status`、`sort` 字段 | **需要**：移除前端本地排序逻辑，按返回顺序渲染 |
 | v1.6.2 | 2026-10-11 | `GET /getIdCardInfo`、`GET /getQrCode` | 服务端 token 缓存缺失不再 500，自动获取后继续处理（参数与响应不变） | 否 |
+| v1.6.18 | 2026-10-25 | `GET /checkout` | **计价规则变更**：① 保险费改为**按车辆配置**（后台车辆管理里配低档/高档日单价），新增入参 `insuranceLevel`（`l1`/`l2`，缺省 l1）；② **保险必买**，取消「不买保险」（原 `insurancePrice=0` 的写法不再有效）；③ 整备费改为按车辆配置（默认 50），响应 `clean_price` 不再是固定 1；④ 新增返回字段 `insurance_level` | **需要**：① 结算页去掉「不买保险」选项，改为低/高档二选一并把所选 `insuranceLevel` 传入；② 保险费、整备费的金额文案改为**取接口返回**（`/getInsurancePrice?carId=` 或 `/getCarFee`），别写死；③ 旧的 `insurancePrice` 传金额方式虽兼容，但请尽快改为传 `insuranceLevel`（兼容规则：金额≥100 视为 l2，否则 l1，**实际金额仍按车辆配置**） |
+| v1.6.18 | 2026-10-25 | `GET /getInsurancePrice` | 金额改为**按车辆读取配置**（新增建议入参 `carId`，不传返回默认档位），不再是全局固定的 1 / 120 | **需要**：调用时带上 `carId`，并把展示金额改为取接口返回值（**金额会比旧值高很多**，属预期变更） |
+| v1.6.18 | 2026-10-25 | `GET /getCarFee`（**新接口**） | 一次返回该车的 `clean_price`（整备费，一次性）与 `insurancePrice_l1`/`l2`（保险日单价） | 否（可选接入，用于结算页展示费用明细） |
+| v1.6.18 | 2026-10-25 | `POST /createOrder` | 保险档位由服务端按 `checkOutArray.insurance_level` + 车辆配置重算，前端传的保险金额一律忽略 | **需要**：把 `/checkout` 返回的整包（含 `insurance_level`）原样作为 `checkOutArray` 传入，**不要自行构造**该对象 |
 | v1.5.0 | — | `GET /getOrderList`、`GET /getOrderDetail` | 订单新增 `pay_status`（支付状态）、`order_status`（履约状态）、`transaction_id`、`pay_time` | 需要（按新状态枚举展示） |
 
 ---

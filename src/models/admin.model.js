@@ -4,6 +4,12 @@
 const MySQL = require('../utils/mysql.js');
 const dayjs = require('dayjs');
 
+/** v1.6.18：车辆费用字段取值——非负数有效，空值回退默认 */
+function feeValue(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 function pageParams(page = 1, pageSize = 10) {
   return {
     offset: (Math.max(1, parseInt(page, 10) || 1) - 1) * pageSize,
@@ -119,11 +125,11 @@ async function getCarList({ page = 1, pageSize = 10, keyword = '', status }) {
   }
 }
 
-async function createCar({ car_name, image_url, des, day_price, promotion_day_price, status, sort }) {
+async function createCar({ car_name, image_url, des, day_price, promotion_day_price, status, sort, clean_price, insurance_price_l1, insurance_price_l2 }) {
   const db = new MySQL();
   try {
     const res = await db.query(
-      'INSERT INTO pp_car (car_name, image_url, des, day_price, promotion_day_price, status, sort) VALUES (?,?,?,?,?,?,?)',
+      'INSERT INTO pp_car (car_name, image_url, des, day_price, promotion_day_price, status, sort, clean_price, insurance_price_l1, insurance_price_l2) VALUES (?,?,?,?,?,?,?,?,?,?)',
       [
         car_name,
         image_url,
@@ -132,6 +138,10 @@ async function createCar({ car_name, image_url, des, day_price, promotion_day_pr
         promotion_day_price || null,
         status === undefined || status === null ? 1 : Number(status),
         sort === undefined || sort === null || sort === '' ? 100 : Number(sort),
+        // v1.6.18：费用配置缺省回到默认值（整备费 50、保险低档 100 / 高档 200）
+        feeValue(clean_price, 50),
+        feeValue(insurance_price_l1, 100),
+        feeValue(insurance_price_l2, 200),
       ]
     );
     return res.insertId;
@@ -140,11 +150,11 @@ async function createCar({ car_name, image_url, des, day_price, promotion_day_pr
   }
 }
 
-async function updateCar(id, { car_name, image_url, des, day_price, promotion_day_price, status, sort }) {
+async function updateCar(id, { car_name, image_url, des, day_price, promotion_day_price, status, sort, clean_price, insurance_price_l1, insurance_price_l2 }) {
   const db = new MySQL();
   try {
     const res = await db.query(
-      'UPDATE pp_car SET car_name = ?, image_url = ?, des = ?, day_price = ?, promotion_day_price = ?, status = ?, sort = ? WHERE id = ?',
+      'UPDATE pp_car SET car_name = ?, image_url = ?, des = ?, day_price = ?, promotion_day_price = ?, status = ?, sort = ?, clean_price = ?, insurance_price_l1 = ?, insurance_price_l2 = ? WHERE id = ?',
       [
         car_name,
         image_url,
@@ -153,6 +163,9 @@ async function updateCar(id, { car_name, image_url, des, day_price, promotion_da
         promotion_day_price || null,
         status === undefined || status === null ? 1 : Number(status),
         sort === undefined || sort === null || sort === '' ? 100 : Number(sort),
+        feeValue(clean_price, 50),
+        feeValue(insurance_price_l1, 100),
+        feeValue(insurance_price_l2, 200),
         id,
       ]
     );

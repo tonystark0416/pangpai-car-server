@@ -158,7 +158,7 @@ async function exportOrders(req, res) {
       rent_day: Number(r.rent_day),
       rent_day_price: Number(r.rent_day_price),
       rent_total_price: Number(r.rent_total_price),
-      clean_price: Number(r.clean_price || 0),
+      clean_price: Number(r.clean_price || 0), // v1.6.18：整备费已落库（历史订单迁移时回填为当时的 1 元）
       server_day_price: Number(r.server_day_price || 0),
       server_total_price: Number(r.server_total_price || 0),
       driver_price: Number(r.driver_price || 0),

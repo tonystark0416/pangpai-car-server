@@ -19,6 +19,10 @@ CREATE TABLE pp_car (
   des                 VARCHAR(100) DEFAULT NULL COMMENT '描述',
   day_price           DECIMAL(10,2) NOT NULL COMMENT '每日租金（原价）',
   promotion_day_price DECIMAL(10,2) DEFAULT NULL COMMENT '每日租金（促销价，结算计价用此字段）',
+  -- v1.6.18：每辆车单独配置费用
+  clean_price         DECIMAL(10,2) NOT NULL DEFAULT 50 COMMENT '整备费（按订单一次性收取，不乘天数）',
+  insurance_price_l1  DECIMAL(10,2) NOT NULL DEFAULT 100 COMMENT '低档保险日单价（× 天数）',
+  insurance_price_l2  DECIMAL(10,2) NOT NULL DEFAULT 200 COMMENT '高档保险日单价（× 天数）',
   create_time         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   status              TINYINT NOT NULL DEFAULT 1 COMMENT '上下架状态：1上架 0下架（v1.6.7）',
@@ -39,6 +43,7 @@ CREATE TABLE pp_order (
   car_id             INT(10) NOT NULL COMMENT '车辆ID（pp_car.id）',
   rent_day           VARCHAR(5) NOT NULL COMMENT '租车天数（字符串）',
   rent_day_price     DECIMAL(10,2) NOT NULL COMMENT '车辆日租金单价',
+  clean_price        DECIMAL(10,2) NOT NULL DEFAULT 1 COMMENT '整备费快照（下单时按车辆配置写入）',
   rent_total_price   DECIMAL(10,2) NOT NULL COMMENT '车辆租金合计',
   server_day_price   DECIMAL(10,2) NOT NULL COMMENT '保险费单价（每天）',
   server_total_price DECIMAL(10,2) NOT NULL COMMENT '保险费合计',

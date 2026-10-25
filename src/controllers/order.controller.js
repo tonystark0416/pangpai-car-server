@@ -22,7 +22,8 @@ async function createOrder(req, res) {
       carId: c.data && c.data.id,
       pickUpTime: c.pickUpTime,
       returnTime: c.returnTime,
-      insurancePrice: c.server_day_price,
+      insuranceLevel: c.insurance_level, // v1.6.18：保险档位（l1/l2），缺省低档
+      insurancePrice: c.server_day_price, // 旧字段，仅用于推断档位
       driverPrice: c.driver_price,
     });
   } catch (error) {

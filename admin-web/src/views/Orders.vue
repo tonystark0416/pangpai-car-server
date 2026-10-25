@@ -64,6 +64,9 @@
         <el-table-column label="司机合计" width="100">
           <template #default="{ row }">￥{{ row.driver_total_price || 0 }}</template>
         </el-table-column>
+        <el-table-column label="整备费" width="100">
+          <template #default="{ row }">￥{{ row.clean_price || 0 }}</template>
+        </el-table-column>
         <el-table-column label="总价" width="100">
           <template #default="{ row }">￥{{ row.total_price }}</template>
         </el-table-column>

@@ -29,6 +29,15 @@
             <span :class="{ promo: row.promotion_day_price }">￥{{ row.promotion_day_price ?? '-' }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="整备费" width="100">
+          <template #default="{ row }">￥{{ row.clean_price ?? 0 }}</template>
+        </el-table-column>
+        <el-table-column label="保险费/天" width="130">
+          <template #default="{ row }">
+            低 ￥{{ row.insurance_price_l1 ?? 0 }}<br />
+            <span class="sub-fee">高 ￥{{ row.insurance_price_l2 ?? 0 }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="排序" width="130">
           <template #default="{ row }">
             <el-input-number v-model="row.sort" :min="1" :max="10000" :step="1" size="small" controls-position="right"
@@ -74,6 +83,18 @@
         <el-form-item label="促销价">
           <el-input-number v-model="form.promotion_day_price" :min="0" :precision="2" :step="10" style="width: 100%" />
         </el-form-item>
+        <el-form-item label="整备费">
+          <el-input-number v-model="form.clean_price" :min="0" :precision="2" :step="10" style="width: 100%" />
+          <div class="tip">按订单一次性收取，<b>不乘天数</b></div>
+        </el-form-item>
+        <el-form-item label="低档保险">
+          <el-input-number v-model="form.insurance_price_l1" :min="0" :precision="2" :step="10" style="width: 100%" />
+          <div class="tip">日单价，<b>会乘天数</b>；用户不可不买保险，二选一</div>
+        </el-form-item>
+        <el-form-item label="高档保险">
+          <el-input-number v-model="form.insurance_price_l2" :min="0" :precision="2" :step="10" style="width: 100%" />
+          <div class="tip">日单价，<b>会乘天数</b>，供用户在结算页切换</div>
+        </el-form-item>
         <el-form-item label="排序值">
           <el-input-number v-model="form.sort" :min="1" :max="10000" :step="1" style="width: 100%" />
           <div class="tip">1~10000 的整数，越小越靠前</div>
@@ -114,9 +135,15 @@ const form = reactive({
   des: '',
   day_price: 0,
   promotion_day_price: 0,
+  clean_price: 50,
+  insurance_price_l1: 100,
+  insurance_price_l2: 200,
   sort: 100,
   status: 1,
 });
+
+/** 费用字段的默认值（新增车辆 / 老数据缺失时兜底） */
+const DEFAULT_FEE = { clean_price: 50, insurance_price_l1: 100, insurance_price_l2: 200 };
 
 async function load() {
   loading.value = true;
@@ -138,6 +165,10 @@ function openForm(row) {
       des: row.des || '',
       day_price: Number(row.day_price),
       promotion_day_price: row.promotion_day_price ? Number(row.promotion_day_price) : 0,
+      // v1.6.18：费用配置，老数据缺字段时回退默认值
+      clean_price: row.clean_price !== undefined && row.clean_price !== null ? Number(row.clean_price) : DEFAULT_FEE.clean_price,
+      insurance_price_l1: row.insurance_price_l1 !== undefined && row.insurance_price_l1 !== null ? Number(row.insurance_price_l1) : DEFAULT_FEE.insurance_price_l1,
+      insurance_price_l2: row.insurance_price_l2 !== undefined && row.insurance_price_l2 !== null ? Number(row.insurance_price_l2) : DEFAULT_FEE.insurance_price_l2,
       sort: Number(row.sort) || 100,
       status: Number(row.status),
     });
@@ -149,6 +180,9 @@ function openForm(row) {
       des: '',
       day_price: 0,
       promotion_day_price: 0,
+      clean_price: DEFAULT_FEE.clean_price,
+      insurance_price_l1: DEFAULT_FEE.insurance_price_l1,
+      insurance_price_l2: DEFAULT_FEE.insurance_price_l2,
       sort: 100,
       status: 1,
     });
@@ -177,6 +211,10 @@ async function saveSort(row) {
       des: row.des || '',
       day_price: Number(row.day_price),
       promotion_day_price: row.promotion_day_price ? Number(row.promotion_day_price) : null,
+      // v1.6.18：整行提交必须带上费用字段，否则会被后端回退成默认值
+      clean_price: Number(row.clean_price ?? DEFAULT_FEE.clean_price),
+      insurance_price_l1: Number(row.insurance_price_l1 ?? DEFAULT_FEE.insurance_price_l1),
+      insurance_price_l2: Number(row.insurance_price_l2 ?? DEFAULT_FEE.insurance_price_l2),
       status: row.status,
       sort: Number(row.sort),
     });
@@ -226,6 +264,10 @@ onMounted(load);
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+.sub-fee {
+  color: #909399;
+  font-size: 12px;
 }
 .promo {
   color: #f56c6c;

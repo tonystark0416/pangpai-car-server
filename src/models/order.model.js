@@ -16,7 +16,7 @@ const car = require('./car.model.js');
 async function createOrder(checkOutData, price) {
     const db = new MySQL();
     const order_sn = genOrderSn(); //获取订单号
-    const sqlCreateOrder = 'INSERT INTO pp_order (order_sn,uid,contact_phone,car_id,rent_day,rent_day_price,rent_total_price,server_day_price,server_total_price,driver_price,driver_total_price,total_price,pickup_address,return_address,pickup_time,return_time) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
+    const sqlCreateOrder = 'INSERT INTO pp_order (order_sn,uid,contact_phone,car_id,rent_day,rent_day_price,rent_total_price,clean_price,server_day_price,server_total_price,driver_price,driver_total_price,total_price,pickup_address,return_address,pickup_time,return_time) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
     const orderData = checkOutData.checkOutArray;
 
     // 车辆可用性校验：不存在 / 已下架（status=0）均拒绝下单
@@ -30,7 +30,7 @@ async function createOrder(checkOutData, price) {
 
     try {
         // 天数与各项金额一律取服务端重算结果
-        const res = await db.query(sqlCreateOrder, [order_sn, orderData.uid, orderData.contact_phone, orderData.data.id, price.rentDay, price.rent_day_price, price.rent_total_price, price.server_day_price, price.server_total_price, price.driver_price, price.driver_total_price, price.total_price, orderData.pickUpAddress, orderData.returnAddress, orderData.pickUpTime, orderData.returnTime]);
+        const res = await db.query(sqlCreateOrder, [order_sn, orderData.uid, orderData.contact_phone, orderData.data.id, price.rentDay, price.rent_day_price, price.rent_total_price, price.clean_price, price.server_day_price, price.server_total_price, price.driver_price, price.driver_total_price, price.total_price, orderData.pickUpAddress, orderData.returnAddress, orderData.pickUpTime, orderData.returnTime]);
 
         if (res.affectedRows > 0) {
             const sqlSelectOrder = 'select * from pp_order where id = ?';

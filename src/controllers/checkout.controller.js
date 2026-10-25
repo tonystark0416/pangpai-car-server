@@ -18,6 +18,7 @@ async function checkout(req, res) {
     returnTime,
     returnAddress,
     insurancePrice,
+    insuranceLevel,
     driver_price,
   } = req.query;
 
@@ -33,7 +34,7 @@ async function checkout(req, res) {
   // v1.6.12：统一走计价服务——天数按 24h 向上取整且至少 1 天，金额由服务端计算
   let price;
   try {
-    price = await pricing.calcOrderPrice({ carId, pickUpTime, returnTime, insurancePrice, driverPrice: driver_price });
+    price = await pricing.calcOrderPrice({ carId, pickUpTime, returnTime, insuranceLevel, insurancePrice, driverPrice: driver_price });
   } catch (error) {
     if (pricing.isPriceError(error)) {
       return res.json({ code: 400, msg: error.message });
@@ -54,14 +55,37 @@ async function checkout(req, res) {
 
 /**
  * 获取保险价格
+ * v1.6.18：**按车辆读取配置**（此前为全局固定的 1 / 120）
+ * @method GET ?carId=（不传则返回系统默认值）
  */
-function getInsurancePrice(req, res) {
-  const result = {
+async function getInsurancePrice(req, res) {
+  const carInfo = req.query.carId ? await car.getCarInfo(req.query.carId) : null;
+  if (req.query.carId && !carInfo) {
+    return res.json({ code: 400, msg: '车辆不存在' });
+  }
+  res.json({
     code: 200,
-    insurancePrice_l1: 1,
-    insurancePrice_l2: 120,
-  };
-  res.json(result);
+    // 字段名沿用旧约定（保险必买，二选一）
+    insurancePrice_l1: carInfo ? Number(carInfo.insurance_price_l1) : 100,
+    insurancePrice_l2: carInfo ? Number(carInfo.insurance_price_l2) : 200,
+  });
+}
+
+/**
+ * 获取车辆费用配置（整备费 + 保险费，v1.6.18 新增）
+ * @method GET ?carId=
+ */
+async function getCarFee(req, res) {
+  const carInfo = await car.getCarInfo(req.query.carId);
+  if (!carInfo) {
+    return res.json({ code: 400, msg: '车辆不存在' });
+  }
+  res.json({
+    code: 200,
+    clean_price: Number(carInfo.clean_price || 0), // 按订单一次性收取，不乘天数
+    insurancePrice_l1: Number(carInfo.insurance_price_l1), // 低档日单价
+    insurancePrice_l2: Number(carInfo.insurance_price_l2), // 高档日单价
+  });
 }
 
 /**
@@ -78,5 +102,6 @@ function getDriverPrice(req, res) {
 module.exports = {
   checkout,
   getInsurancePrice,
+  getCarFee,
   getDriverPrice,
 };
