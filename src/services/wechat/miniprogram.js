@@ -63,6 +63,23 @@ async function getWxOpenid(js_code) {
 }
 
 /**
+ * 手机号快速验证：用前端 <button open-type="getPhoneNumber"> 拿到的 code 换真实手机号
+ * 走 access_token 接口，无需 session_key / 加密数据解密
+ *
+ * 注意：该能力自 2023 年起按次收费（约 0.03 元/次，新小程序有一定免费额度），
+ * 且要求小程序为非个人主体。
+ *
+ * @param {string} code getPhoneNumber 回调里的 code（非 wx.login 的 code）
+ * @returns 微信原始响应：{errcode, errmsg, phone_info:{phoneNumber, purePhoneNumber, countryCode, watermark}}
+ */
+async function getPhoneNumber(code) {
+  const token = await getAccessTokenCached();
+  const url = 'https://api.weixin.qq.com/wxa/business/getuserphonenumber?access_token=' + token;
+  const res = await axios.post(url, { code });
+  return res.data;
+}
+
+/**
  * 识别身份证（微信 OCR）
  * @method GET ?img_url=
  */
@@ -94,6 +111,7 @@ module.exports = {
   getAccessToken,
   getAccessTokenCached,
   getWxOpenid,
+  getPhoneNumber,
   getIdCardInfo,
   getUnlimitedQRCode,
 };

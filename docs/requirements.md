@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.6.20 ｜ 日期：2026-10-25 ｜ 状态：迭代中
+> 版本：v1.7.0 ｜ 日期：2026-10-25 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -102,23 +102,53 @@ pangpai-car/
 
 | 接口 | 方法 | 说明 |
 |---|---|---|
-| `/getOpenid` | GET | 小程序 `code` 调微信 `jscode2session` 换 openid |
-| `/tryLogin` | GET | openid 联合登录（自动注册），查找顺序见下 |
+| `/getOpenid` | GET | 小程序 `code` 调微信 `jscode2session` 换 openid（**不做任何注册**） |
+| `/tryLogin` | GET | openid 登录（**v1.7.0 起只查不注册**：已绑定返回用户行；未绑定返回 `202 + needPhone:true`，前端引导走 `/loginByPhone`） |
+| `/loginByPhone` | GET | **v1.7.0 新账号体系注册登录主入口**：入参 `code`（`<button open-type="getPhoneNumber">` 回调的 code，**非 wx.login 的 code**）+ 可选 `openid`/`unionid`；服务端向微信换真实手机号 → 按手机号注册/登录 → 绑定 openid/unionid → 返回用户行（含 `id` 即 uid） |
+| `/bindPhone` | GET | **v1.7.0 新增**：已登录用户补填手机号，入参 `uid` + `code`（老用户无手机号时可接入） |
 | `/getUserDriverInfo` | GET | 按 uid 查询驾驶证信息 |
 | `/updateUserDriverInfo` | GET | 新增/更新驾驶证信息（姓名、身份证号、身份证图片 URL、出生日期） |
 | `/getIdCardInfo` | GET | 微信 OCR 身份证识别（`cv/ocr/idcard`），传 `img_url` |
 | `/upload` | POST | multer 上传身份证照片至 `UPLOAD_DIR`，返回 `{code:200, path: IMAGE_BASE_URL/images/<filename>}` |
 | `/images/*` | GET | 静态图片服务（`express.static`，1 小时浏览器缓存） |
 
-**流程**：上传身份证照片 → OCR 识别回填 → 保存至 `pp_driver` 表。
+**驾驶证流程**：上传身份证照片 → OCR 识别回填 → 保存至 `pp_driver` 表。
 
-**多小程序共享用户设计（v1.4.0）**：两个业务小程序共用 `adp_user` 统一身份，登录态走 `adp_user_auth` 授权表（一个小程序一行）。`/tryLogin` 查找顺序：
+**账号注册/登录流程（v1.7.0 起，手机号为准）**：
+
+```
+wx.login → /getOpenid 取 openid(+unionid)
+     ↓
+/tryLogin  【只查不注册】
+     ├─ 已绑定 → 200 + 用户行（含 id=uid），直接进入
+     └─ 未绑定 → 202 + needPhone:true
+              ↓
+        前端 <button open-type="getPhoneNumber"> 拿到 code
+              ↓
+        /loginByPhone?code=&openid=&unionid=
+              ① 服务端调微信 wxa/business/getuserphonenumber 换真实手机号
+              ② 手机号已存在 → 登录该账号；不存在 → 新建 pp_user(phone)
+              ③ 把 openid/unionid 绑定到该 user_id
+              ↓
+        200 + 用户行（含 id=uid）
+```
+
+规则与边界：
+
+- **手机号是账号唯一标识**（`pp_user.phone` 唯一索引 `uk_phone`，v1.7.0 加）；同一手机号 = 同一人，换微信登录也落到同一 uid 并补绑新 openid。
+- **一个 openid 只能属于一个账号**：若授权时该 openid 已绑到别的 uid，返回 `400 该微信已绑定其他账号`（拒绝，绝不改写，避免串号）。
+- openid 授权仍写 `pp_user_auth(user_id, biz_code, openid, unionid)`，唯一键 `(biz_code, openid)`。
+- **老用户平滑过渡**：v1.7.0 之前已用 openid 绑定的用户（无手机号）仍可正常 `/tryLogin` 登录，只是不再有新用户靠 openid 自动建号；需要补手机号时前端接 `/bindPhone`。
+- **孤儿授权自愈**：若 `pp_user` 行被删除而授权行残留（会让该 openid 永久登录失败且每次新建空用户），`/tryLogin` 会自动清理该孤儿行，使其可重新走手机号注册。
+- 手机号快速验证能力由微信按次计费（约 0.03 元/次，新小程序有免费额度），且要求非个人主体小程序。
+
+**多小程序共享用户设计（v1.4.0，v1.6.15 起为 pp_ 表）**：两个业务小程序共用 `pp_user` 统一身份，登录态走 `pp_user_auth` 授权表（一个小程序一行）。`/tryLogin`（v1.7.0 起为只查不注册）查找顺序：
 
 1. 按 `(biz_code, openid)` 查授权表 → 命中直接登录
-2. 传入 `unionid` 且 ①未命中 → 按 unionid 找到其他小程序的授权 → 复用同一 `user_id`（跨业务自动关联）
-3. 均未命中 → 新建 `adp_user` + `adp_user_auth`
+2. 传入 `unionid` 且 ①未命中 → 按 unionid 找到其他小程序的授权 → 复用同一 `user_id` 并补一行 openid 授权（跨业务自动关联）
+3. 均未命中 → **返回 null（v1.7.0 起不再新建用户，前端转手机号注册）**
 
-当前两小程序不在同一开放平台下、暂无 unionid，跨业务关联先依赖手机号等后续手段；表结构与代码已预留 unionid 通路，未来绑定同一开放平台后自动生效。业务标识由 `.env` 的 `BIZ_CODE` 配置（当前 `pp`）。`adp_user.openid` 为存量字段（47 条已迁移至授权表），新用户不再写入该列。
+当前两小程序不在同一开放平台下、暂无 unionid，跨业务关联现依赖手机号（同一手机号落到同一 uid）；表结构与代码已预留 unionid 通路，未来绑定同一开放平台后自动生效。业务标识由 `.env` 的 `BIZ_CODE` 配置（当前 `pp`）。
 
 ### 2.2 车辆与订单
 
@@ -247,10 +277,12 @@ pangpai-car/
 |---|---|---|
 | `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time, **status(上下架：1上架 0下架，v1.6.7)**, **sort(排序值 1~10000 整数，越小越靠前，v1.6.7)** |
 | `pp_order` | 租车订单 | 全部 23 字段均已加中文注释（v1.6.6）：id=订单ID, order_sn=订单号（PP+yyyyMMddHHmmss）, uid=下单用户ID（adp_user.id）, contact_phone=联系电话, car_id=车辆ID（pp_car.id）, rent_day=租车天数（**varchar(5)**）, rent_day_price=车辆日租金单价, rent_total_price=车辆租金合计, server_day_price=保险费单价（每天）, server_total_price=保险费合计, driver_price=司机服务费单价（每天）, driver_total_price=司机服务费合计, **clean_price=整备费快照（v1.6.18 新增，v1.6.19 调整至司机合计之后、总价之前）**, total_price=订单总价, **pay_status=支付状态 0待支付 1已支付 2已退款 3支付失败（v1.5.0）**, **transaction_id=微信支付单号**, **pay_time=支付时间**, **order_status=履约状态 0待取车 1已取车 2已还车 3已完成 4已取消（v1.5.0）**, create_time=创建时间, update_time=更新时间, pickup_address=取车地址(100), return_address=还车地址(100), pickup_time=取车时间（**varchar(50)，毫秒时间戳字符串**）, return_time=还车时间 |
-| `adp_user` | 多业务线统一用户 | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), openid(50)（存量字段，新用户不再写入）, phone(20), create_time, update_time |
-| `adp_user_auth` | 用户授权表（v1.4.0，一个小程序一行） | id, user_id, biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 (biz_code, openid) |
+| `pp_user` | 庞派用户（v1.6.15 从 `adp_user` 迁出，保留原主键） | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), **phone(20)（v1.7.0 起为账号唯一标识，唯一索引 `uk_phone`）**, create_time, update_time |
+| `pp_user_auth` | 用户授权表（一个小程序一行） | id, user_id(关联 pp_user.id), biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 `uk_biz_openid(biz_code, openid)`，另有 idx_user / idx_unionid |
 | `pp_driver` | 驾驶证信息 | id, user_id, driver_idcard_name(10), driver_idcard_number(50), driver_idcard_url(200), driver_idcard_birth(20), create_time, update_time |
 
+> 已迁出：`adp_user` / `adp_user_auth` / `adp_admin_user` 为其他项目在用，数据未删、代码不再引用（v1.6.15）。
+>
 > 尚未建立但需要：订单**支付状态字段/表**（当前回调不落库）。
 > 本地开发：`scripts/local-dev-init.sql` 可一键重建与线上一致的表结构 + 种子数据；当前 `.env` 直连线上库（注意写操作会入生产数据）。
 
@@ -336,6 +368,7 @@ pangpai-car/
 | v1.6.15 | 2026-10-24 | 用户体系拆分：庞派用户从共用表 `adp_user` / `adp_user_auth` / `adp_admin_user` 迁出到独立的 `pp_user` / `pp_user_auth` / `pp_admin_user`，adp_ 表保留给其他项目且**数据未做任何删除或修改**。迁移脚本 `scripts/migrate_user_to_pp.js`（先建库内备份表 + 导出离线 SQL，再 `CREATE TABLE ... LIKE` 建新表，按「有 pp 授权 ∪ 被 pp_order/pp_driver 引用」的口径迁移并**保留原主键 id**，幂等可重复执行补迁窗口期数据，最后校正 AUTO_INCREMENT）。代码侧替换 `user.model.js`（6 处 SQL）与 `admin.model.js`（11 处 SQL），`local-dev-init.sql` 同步改为建 pp_ 表 | 实测：备份表 63/62/1 行；迁入 pp_user 62 行、pp_user_auth 62 行、pp_admin_user 1 行；订单 7/45、驾驶证 1/2 关联成功（未关联的 uid 61/123 在**旧表本来就不存在**，属历史孤儿数据，非迁移丢失）；后台登录、用户列表、订单详情 join、小程序 openid 登录/新注册 全部正常 |
 | v1.6.16 | 2026-10-24 | 新增 C 端「取消订单」接口 `POST /cancelOrder`：仅用于**未支付**订单（不涉及资金），校验归属 uid + `pay_status=0` + `order_status=0`，通过后仅置 `order_status=4`（已取消）；`order.model.cancelUnpaidOrder` 的 UPDATE 条件自带状态断言，杜绝并发下误改已支付/已取车订单。与 `/cancelRefund` 按支付状态严格分流，避免「钱没退、单却取消了」 | 实测：未支付待取车 → 200 已取消且落库 order_status=4；重复取消 → 400 订单已取消；已支付订单 → 400 引导走 /cancelRefund；未支付已取车 → 400 提示联系客服；越权 403；不存在 404；缺参 400（测试订单已删除） |
 | v1.6.17 | 2026-10-25 | C 端 `GET /getOrderList` 支持状态筛选：新增可选入参 `pay_status` / `order_status`（支持逗号分隔多值，白名单外的值忽略），筛选在 **SQL 层**完成（全局筛选而非当前页过滤），不传参数行为与旧版完全一致；响应新增可选字段 `total` / `page` / `pageSize` 便于前端分页 | 实测：不传筛选 total=4 与旧版一致；`order_status=4` / `order_status=2,4` / `pay_status=1,2` 均命中 4 条；组合 `pay_status=2&order_status=4` 命中 3 条、`pay_status=1&order_status=4` 命中 1 条；非法值 `pay_status=99` 被忽略（total 仍为 4）；页码为 0 仍返回 201 |
+| v1.7.0 | 2026-10-25 | **账号体系改为手机号为准（注册流程重构）**：① `pp_user.phone` 加唯一索引 `uk_phone`（v1.7.0 起手机号为账号唯一标识）；② `/tryLogin` 由「openid 自动注册」改为 **只查不注册**——已绑定返回用户行，未绑定返回 `202 + needPhone:true`；③ 新增注册主入口 `GET /loginByPhone`（入参 `code` = `<button open-type="getPhoneNumber">` 回调 code + 可选 `openid`/`unionid`）：服务端调微信 `wxa/business/getuserphonenumber` 换真实手机号 → 手机号已存在则登录该账号、不存在则新建 → 绑定 openid/unionid → 返回 uid；④ 新增 `GET /bindPhone`（已登录用户补填手机号，老用户可选接入）；⑤ 修复孤儿授权 bug：`pp_user` 行被删后授权行残留会让该 openid 永久登录失败且每次新建空账号（唯一键冲突被 catch 吞掉），现 `/tryLogin` 自动清理孤儿行；⑥ 迁移脚本 `scripts/migrate_user_phone_unique.js`（清理孤儿授权行并离线导出、空串转 NULL、重复号检测、加唯一索引，幂等） | 实测：未绑定 openid 返回 202 且不再建号；假 code 调 `/loginByPhone` 微信返 40029，接口返回明确 400 不 5xx；主流程用例——同号重复登录落同一 uid、同号换微信补绑新 openid、openid 已绑他号返回 -2、补号与他人号码冲突返回 -2（测试数据已清理，用户数 66→66）；老用户（已 openid 绑定、无手机号）登录不受影响。**待前端配合**：登录页改为「202 → 手机号授权按钮 → /loginByPhone」，微信手机号能力按次计费（约 0.03 元/次）且需非个人主体 |
 | v1.6.20 | 2026-10-25 | 库内备份表清理（纯运维，无代码改动）：删除全部 5 张历史迁移备份表 `adp_admin_user_bak_20261024`(1)、`adp_user_bak_20261024`(63)、`adp_user_auth_bak_20261024`(62)、`pp_car_bak_20261025`(24)、`pp_order_bak_20261025`(45)；删除前已离线导出完整 `CREATE TABLE` + `INSERT` 快照至 `~/pp_backup_tables_20261025.sql`（35KB，工作区外、不入库）；数据库设计一节新增「表命名与清理约定」 | 这些表为一次性快照、业务代码零引用（已全量 grep 确认），删除不影响任何流程；线下库现仅剩 13 张业务/历史表。`adp_*` 系列为其他项目在用，**不可删** |
 | v1.6.19 | 2026-10-25 | 订单整备费列位置归位：① 线上 `pp_order.clean_price` 由表末（v1.6.18 `ADD COLUMN` 默认追加在最后）经 `MODIFY COLUMN ... AFTER driver_total_price` 调整至「司机服务费合计」之后、「订单总价」之前，使费用字段按「租金→保险→司机→整备费→总价」的物理顺序与计价公式一致；② 新增幂等迁移脚本 `scripts/migrate_order_clean_price_position.js`（先建库内备份表 → 从 `information_schema` 读出原类型/非空/默认值/**中文注释**再 MODIFY，避免注释丢失或乱码 → 前后校验行数与整备费合计）；③ `scripts/local-dev-init.sql` 同步列顺序并将默认值对齐线上（1 → 0） | 代码零影响：下单 INSERT 用显式列名、查询与导出均按字段名取值，不依赖物理列顺序；实测 45 行订单、整备费合计 45.00 前后一致，列位置 24→13、中文注释保留 |
 | v1.6.18 | 2026-10-25 | **费用改为按车辆配置**：① `pp_car` 新增 `clean_price`（整备费，一次性不乘天数）、`insurance_price_l1`/`insurance_price_l2`（两档保险日单价），迁移脚本 `scripts/migrate_car_fee_fields.js` 给现有 24 辆车填默认值 50 / 100 / 200（先备份）；② `pp_order` 新增 `clean_price` **快照列**（此前整备费从未落库），历史 45 笔订单回填为原固定值 1 元；③ 计价服务改为读取车辆配置，**保险费必买、二选一**（缺省低档 l1），旧参 `insurancePrice` 兼容映射为档位（≥100 视为 l2）但金额以车辆配置为准；④ 计价公式为 `日租金×天数 + 保险日单价×天数 + 司机日单价×天数 + 整备费`；⑤ 新增 `GET /getCarFee`、`/getInsurancePrice?carId=` 按车返回费用；⑥ 后台车辆管理表单/列表支持配置这三项费用；⑦ 订单列表与导出 Excel 的「整备费」取真实落库值 | 实测：低档 2 天 `4600+200+50=4850`、高档 `4600+400+50=5050`、加司机 `+800=5850`；后台把某车改为整备 88 / 保险 66 后结算立即变为 4820 ✅；构造 `total_price=0.01 & rentDay=99` 的下单请求，落库为服务端算的 rent_day=2、clean_price=88、total_price=4820（测试订单已删除，配置已还原）；旧参兼容：insurancePrice=120→l2、=1→l1 |

@@ -38,16 +38,55 @@
 
 > 前端调用 `wx.login()` 拿 code → 调本接口 → 拿 openid 再调 `tryLogin`。
 
-### 1.2 openid 登录（自动注册）
+### 1.2 openid 登录（**v1.7.0 起只查不注册**）
 
 | 项 | 内容 |
 |---|---|
 | 方法 / 路径 | `GET /tryLogin` |
 | 参数 | `openid`（必填）、`unionid`（可选，建议传，用于跨小程序识别同一用户） |
 | 成功 | `{code:200, msg:'自动登陆成功', result:{id, phone, nickname, username, ...}}` ← **result.id 即 uid，后续接口都用它** |
-| 失败 | `{code:201, msg:'登陆失败'}` |
+| **未注册** | **`{code:202, msg:'未注册，请先授权手机号', needPhone:true}`** ← **v1.7.0 新增，前端必须处理：引导用户走手机号授权（1.3）** |
+| 失败 | `{code:201, msg:'登陆失败'}`（缺 openid 参数） |
 
-### 1.3 查询驾驶证信息
+> ⚠️ **变更**：v1.7.0 起未绑定的 openid **不再自动创建账号**，返回 `202` 而不是直接给 uid。老用户（此前已 openid 绑定过）不受影响，仍返回 `200`。
+
+### 1.3 手机号注册 / 登录（**v1.7.0 新接口，注册主入口**）
+
+| 项 | 内容 |
+|---|---|
+| 方法 / 路径 | `GET /loginByPhone` |
+| 参数 | `code`（**必填**，`<button open-type="getPhoneNumber">` 事件里的 `e.detail.code`，**不是 `wx.login()` 的 code**）、`openid`（建议传，来自 `/getOpenid`）、`unionid`（可选） |
+| 成功 | `{code:200, msg:'登陆成功', result:{id, phone, nickname, ...}}` ← **result.id 即 uid** |
+| 失败 | `{code:201, msg:'缺少code参数'}`；`{code:400, msg:'手机号获取失败：'+微信错误, wxErrcode:...}`（常见 `40029 invalid code`——code 已被使用过或无效，需重新拉起授权）；`{code:400, msg:'该微信已绑定其他账号，请联系客服'}`；`{code:500, msg:'注册失败，请重试'}` |
+| 说明 | 服务端拿 code 向微信换真实手机号：**该手机号已注册则直接登录该账号**，未注册则新建账号；随后把 `openid`/`unionid` 绑定到该 uid |
+
+**前端接入要点**：
+
+```js
+// wxml
+<button open-type="getPhoneNumber" bindgetphonenumber="onGetPhone">授权手机号登录</button>
+// js
+async onGetPhone(e) {
+  if (e.detail.code) {
+    const r = await request('/loginByPhone', { code: e.detail.code, openid: this.openid });
+    // r.code === 200 → r.result.id 即 uid，存起来进首页
+  }
+}
+```
+
+- `e.detail.code` **一次性**，用完即失效，不要缓存；失败时重新拉起授权拿新 code。
+- 手机号能力由微信按次计费（约 0.03 元/次），且要求小程序为非个人主体。
+
+### 1.4 补填手机号（老用户可选）
+
+| 项 | 内容 |
+|---|---|
+| 方法 / 路径 | `GET /bindPhone` |
+| 参数 | `uid`（必填）、`code`（必填，同 1.3 的手机号 code） |
+| 成功 | `{code:200, msg:'手机号绑定成功', phone}` |
+| 失败 | `{code:201, msg:'缺少uid或code参数'}`；`{code:400, msg:'手机号获取失败：...'}`；`{code:404, msg:'用户不存在'}`；`{code:400, msg:'该手机号已被其他账号使用'}` |
+
+### 1.5 查询驾驶证信息
 
 | 项 | 内容 |
 |---|---|
@@ -57,7 +96,7 @@
 | 成功（无记录） | `-1`（**裸数字**，不是 code 结构） |
 | 备注 | 判断是否已认证：`typeof res === 'object' && res.id` |
 
-### 1.4 提交 / 更新驾驶证信息
+### 1.6 提交 / 更新驾驶证信息
 
 | 项 | 内容 |
 |---|---|
@@ -281,6 +320,9 @@
 | v1.6.11 | 2026-10-17 | `GET /getWxPay` | 更正说明：`totalFee` 单位是**分**（此前文档误写为元；代码与支付回调金额核验口径一直是「分」） | 否（若此前按「元」传参请改为「分」） |
 | v1.6.12 | 2026-10-18 | `GET /checkout` | 租用天数改为**按 24 小时向上取整且至少 1 天**（`rentDay` 变整数）；时间倒挂/取还相同/时间非法/保险或司机金额不在白名单均返回 `400 + msg` | **需要**：① 若有依赖小数天数的展示请改为整数；② 新增的 400 错误按 `res.msg` 提示用户 |
 | v1.6.12 | 2026-10-18 | `POST /createOrder` | **金额改由服务端重算**，忽略前端传来的 `rentDay`/`rent_total_price`/`total_price`；新增时间与金额白名校验的 400 错误 | **需要**：支付前务必用 `result`（或 `/getOrderDetail`）返回的 `total_price` 下单支付，**不要**用本地计算值，否则支付回调金额核验会失败 |
+| v1.7.0 | 2026-10-25 | `GET /tryLogin` | **不再自动注册**：已绑定 openid 仍返回 `200 + result（含 id=uid）`；**未绑定返回 `202 + needPhone:true`，不再创建账号** | **需要**：登录逻辑改为 if code===200 进首页、else if code===202 展示手机号授权按钮走 `/loginByPhone`（否则新用户永远拿不到 uid） |
+| v1.7.0 | 2026-10-25 | `GET /loginByPhone`（**新接口，注册主入口**） | 传 `code`（`getPhoneNumber` 回调）+ `openid`(+`unionid`)，服务端换手机号后按手机号注册/登录并绑定 openid，返回 `200 + result（含 id=uid）` | **需要**：登录页加 `<button open-type="getPhoneNumber">`，把 `e.detail.code` 传给本接口；code 一次性，勿缓存 |
+| v1.7.0 | 2026-10-25 | `GET /bindPhone`（**新接口**） | 已登录用户补填手机号（`uid` + `code`），老用户（无手机号）可选接入 | 否（可选；若想补齐老用户手机号则接入） |
 | v1.6.17 | 2026-10-25 | `GET /getOrderList` | **新增可选筛选参数** `pay_status`、`order_status`（支持逗号分隔多值，非法值忽略，不传则行为不变）；响应**新增可选字段** `total` / `page` / `pageSize`（`result` 仍是订单数组） | **否（向后兼容）**：老版本不传参、只取 `result` 完全不受影响；若要加订单状态 Tab，则按建议传参即可 |
 | v1.6.16 | 2026-10-24 | `POST /cancelOrder`（**新接口**） | 取消**未支付**订单（不涉及资金，仅置已取消）。与 `/cancelRefund` 按支付状态分流：未支付走本接口，已支付走 `/cancelRefund` | **需要**：订单列表/详情对「未支付」状态增加「取消订单」入口，调用本接口；已支付订单仍走 `/cancelRefund` |
 |---|---|---|---|---|
@@ -297,7 +339,7 @@
 
 ## 7. 联调自测清单
 
-1. 登录：`wx.login()` → `/getOpenid` → `/tryLogin`，确认拿到 `uid`
+1. 登录：`wx.login()` → `/getOpenid` → `/tryLogin`；已注册直接拿 `uid`，新用户收 `202` → 手机号授权 → `/loginByPhone` 拿到 `uid`
 2. 车辆列表：`/getCarList?pageNum=1`，确认顺序与后台 sort 一致、下架车不出现
 3. 结算：`/checkout` 传入取还车时间（毫秒时间戳）→ 确认 `total_price` 正确
 4. 下单：`/checkout` 结果整包作为 `checkOutArray` → `/createOrder` → 拿到 `order_sn`

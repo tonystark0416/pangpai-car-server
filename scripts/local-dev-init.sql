@@ -74,11 +74,11 @@ CREATE TABLE pp_user (
   password     VARCHAR(255) DEFAULT NULL,
   nickname     VARCHAR(50) DEFAULT NULL,
   avatar       VARCHAR(255) DEFAULT NULL,
-  openid       VARCHAR(50) DEFAULT NULL COMMENT '微信openid',
-  phone        VARCHAR(20) DEFAULT NULL COMMENT '手机号',
+  phone        VARCHAR(20) DEFAULT NULL COMMENT '手机号（v1.7.0 起为账号唯一标识）',
   create_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   update_time  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_phone (phone)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一用户表';
 
 -- ------------------------------------------------------------
