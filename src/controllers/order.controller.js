@@ -2,11 +2,14 @@
  * 订单控制器
  */
 const order = require('../models/order.model');
+const couponModel = require('../models/coupon.model');
 const pricing = require('../services/pricing.service');
+const couponService = require('../services/coupon.service');
 
 /**
  * 创建订单接口
  * v1.6.12：服务器端重新计价——天数/金额以服务端为准，前端传价仅作为选项（保险、司机）输入
+ * v1.7.3：支持使用一张优惠券（checkOutArray.coupon_sn），服务端校验后核销并落库实付金额
  * @method POST body: { checkOutArray: {...结算结果} }
  */
 async function createOrder(req, res) {
@@ -16,6 +19,17 @@ async function createOrder(req, res) {
   }
 
   const c = data.checkOutArray;
+
+  // v1.7.3：校验优惠券（与 /checkout 同一套口径），每单最多一张
+  const check = await couponService.resolveCouponForOrder({
+    uid: c.uid,
+    couponSn: c.coupon_sn,
+    carId: c.data && c.data.id,
+  });
+  if (!check.ok) {
+    return res.status(400).json({ code: 400, msg: check.msg });
+  }
+
   let price;
   try {
     price = await pricing.calcOrderPrice({
@@ -25,6 +39,7 @@ async function createOrder(req, res) {
       insuranceLevel: c.insurance_level, // v1.6.18：保险档位（l1/l2），缺省低档
       insurancePrice: c.server_day_price, // 旧字段，仅用于推断档位
       driverPrice: c.driver_price,
+      coupon: check.coupon,
     });
   } catch (error) {
     if (pricing.isPriceError(error)) {
@@ -33,15 +48,36 @@ async function createOrder(req, res) {
     throw error;
   }
 
-  const result = await order.createOrder(data, price);
+  // v1.7.3：券抵扣后金额为 0 暂不支持（微信支付不接受 0 元下单），拦截并返还券
+  if (check.coupon && Number(price.pay_amount) <= 0) {
+    await couponModel.revertCoupon(check.coupon.coupon_sn);
+    return res.status(400).json({ code: 400, msg: '优惠券抵扣后应付金额为 0，暂不支持 0 元订单，请更换优惠券或调整订单' });
+  }
+
+  // 券码先行核销需要订单号，故此处预先生成（同一订单号贯穿「核销券 + 建单」两步）
+  const orderSn = order.genOrderSn();
+  if (check.coupon) {
+    const affected = await couponModel.useCoupon(check.coupon.coupon_sn, orderSn);
+    if (affected !== 1) {
+      // 并发场景：券在校验与核销之间被别的订单占用
+      return res.status(400).json({ code: 400, msg: '优惠券已被使用，请重新选择' });
+    }
+    console.log(`[order] 优惠券已核销：${check.coupon.coupon_sn} → ${orderSn}，抵扣 ￥${price.discount_price}`);
+  }
+
+  const result = await order.createOrder(data, price, orderSn);
   // v1.6.8：车辆不存在/已下架时拒绝下单（模型层返回约定见 order.model.createOrder）
   if (result === -2) {
+    if (check.coupon) await couponModel.revertCoupon(check.coupon.coupon_sn);
     return res.status(400).json({ code: 400, msg: '车辆不存在，无法下单' });
   }
   if (result === -3) {
+    if (check.coupon) await couponModel.revertCoupon(check.coupon.coupon_sn);
     return res.status(400).json({ code: 400, msg: '该车辆已下架，暂不可预订' });
   }
   if (!result) {
+    // 建单失败要把券还给用户，避免「券没了、单也没成」
+    if (check.coupon) await couponModel.revertCoupon(check.coupon.coupon_sn);
     return res.status(500).json({ code: 500, msg: '订单创建失败' });
   }
   res.json({ message: '数据接收成功', result });

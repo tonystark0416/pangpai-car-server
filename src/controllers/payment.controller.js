@@ -18,6 +18,22 @@ class PaymentController {
     try {
       const { body, outTradeNo, totalFee, openid, attach } = req.query;
       const spbillCreateIp = config.wxPay.spbillCreateIp;
+
+      // v1.7.3：服务端校准金额——以订单实付（用券后）为准，避免前端传错导致多付/少付
+      if (outTradeNo && totalFee !== undefined && totalFee !== null && totalFee !== '') {
+        const dbOrder = await orderModel.getOrderBySn(outTradeNo);
+        if (dbOrder) {
+          const expectFee = Math.round(Number(dbOrder.pay_amount ?? dbOrder.total_price) * 100); // 单位：分
+          if (Number(totalFee) !== expectFee) {
+            console.error('[pay] 支付金额与订单实付不符:', outTradeNo, '传入', totalFee, '应为', expectFee);
+            return res.json({
+              success: false,
+              message: `支付金额与订单金额不一致（应为 ${expectFee} 分），请刷新订单后重试`,
+            });
+          }
+        }
+      }
+
       // 统一下单
       const result = await wechatPay.unifiedOrder({
         body,
@@ -144,7 +160,8 @@ class PaymentController {
         }
 
         // 3. 金额核验（单位：分）
-        const expectFee = Math.round(Number(order.total_price) * 100);
+        // v1.7.3：有优惠券时以实付 pay_amount 为准；历史订单 pay_amount 已回填为 total_price，口径不变
+        const expectFee = Math.round(Number(order.pay_amount ?? order.total_price) * 100);
         if (Number(result.total_fee) !== expectFee) {
           console.error('[pay-callback] 金额不一致:', result.out_trade_no, '期望', expectFee, '实付', result.total_fee);
           return replyFail('金额不一致');

@@ -4,9 +4,11 @@
  */
 const car = require('../models/car.model');
 const pricing = require('../services/pricing.service');
+const couponService = require('../services/coupon.service');
 
 /**
  * 结算计价
+ * v1.7.3：新增可选入参 `couponSn`（券码），服务端校验可用性后算出优惠明细返回
  */
 async function checkout(req, res) {
   const {
@@ -20,6 +22,7 @@ async function checkout(req, res) {
     insurancePrice,
     insuranceLevel,
     driver_price,
+    couponSn,
   } = req.query;
 
   if (!uid || !carId) {
@@ -31,10 +34,28 @@ async function checkout(req, res) {
     return res.json({ code: 400, msg: '车辆不存在，无法结算' });
   }
 
+  // v1.7.3：优惠券可用性校验（归属、状态、有效期、适用范围），每单最多一张
+  let usedCoupon = null;
+  if (couponSn) {
+    const check = await couponService.resolveCouponForOrder({ uid, couponSn, carId });
+    if (!check.ok) {
+      return res.json({ code: 400, msg: check.msg });
+    }
+    usedCoupon = check.coupon;
+  }
+
   // v1.6.12：统一走计价服务——天数按 24h 向上取整且至少 1 天，金额由服务端计算
   let price;
   try {
-    price = await pricing.calcOrderPrice({ carId, pickUpTime, returnTime, insuranceLevel, insurancePrice, driverPrice: driver_price });
+    price = await pricing.calcOrderPrice({
+      carId,
+      pickUpTime,
+      returnTime,
+      insuranceLevel,
+      insurancePrice,
+      driverPrice: driver_price,
+      coupon: usedCoupon,
+    });
   } catch (error) {
     if (pricing.isPriceError(error)) {
       return res.json({ code: 400, msg: error.message });

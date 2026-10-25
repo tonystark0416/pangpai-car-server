@@ -7,7 +7,7 @@
 > - 文档维护约定：**任何涉及小程序端接口的改动，都必须同步更新本文件后再交付前端**（版本记录见文末 Change Log）
 > - **交付约定：改动涉及本文件所列接口时，必须向项目负责人明确报告「入参/出参是否有变动」，若前端需因此改代码（新增返回字段、新增错误码、字段类型/单位变化等）必须单独提醒其更新小程序**
 >
-> 适用版本：后端 **v1.7.0** ｜ 更新日期：2026-10-25
+> 适用版本：后端 **v1.7.3** ｜ 更新日期：2026-10-25
 
 ---
 
@@ -20,7 +20,8 @@
    - 裸对象 / 裸数字（结算、驾驶证信息）
 2. **时间字段**：`create_time`/`update_time`/`pay_time` 为 MySQL datetime（后端返回 `2026-10-11 13:13:59` 格式或原始值）；`pickup_time`/`return_time` 为**毫秒时间戳字符串**，前端需自行格式化。
 3. **金额**：单位均为**元**（后端内部再转分传给微信支付）。
-4. 支付相关接口为微信支付 V2，`totalFee` 传**分**（与支付回调核验口径一致：回调 `total_fee` 必须等于订单 `total_price×100`，否则支付不会被落库）。
+4. 支付相关接口为微信支付 V2，`totalFee` 传**分**（与支付回调核验口径一致：回调 `total_fee` 必须等于订单**实付** `pay_amount×100`，否则支付不会被落库）。
+5. **v1.7.3 金额口径**：订单 `total_price` = **原价**，优惠券抵扣为 `discount_price`，**实付 `pay_amount` = total_price - discount_price**。**支付、退款、实付展示一律用 `pay_amount`**（无券时 `pay_amount` = `total_price`）。
 
 ---
 
@@ -194,9 +195,10 @@ async onGetPhone(e) {
 |---|---|
 | 方法 / 路径 | `GET /checkout` |
 | 参数 | `uid`（必填）、`carId`（必填）、`pickUpTime`（毫秒时间戳）、`returnTime`（毫秒时间戳）、`pickUpAddress`、`returnAddress`、`contact_phone`（**订单联系电话，由用户在结算页手填，见下方说明**）、`driver_price`（司机单价/天）、**`insuranceLevel`（v1.6.18 新增）** |
-| 成功 | 裸对象（无 code 包裹）：`{uid, contact_phone, data:{车辆对象}, rent_day_price, rentDay, rent_total_price, clean_price, server_day_price, server_total_price, door_pickup_price, door_return_price, driver_price, driver_total_price, total_price, insurance_level, pickUpAddress, returnAddress, pickUpTime, returnTime}` |
-| 失败 | `{code:-1, msg:'参数缺失'}` / `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` / `400 {"code":400,"msg":"车辆不存在，无法结算"}` / `400 {"code":400,"msg":"车辆整备费配置异常，请联系客服"}` |
+| 成功 | 裸对象（无 code 包裹）：`{uid, contact_phone, data:{车辆对象}, rent_day_price, rentDay, rent_total_price, clean_price, server_day_price, server_total_price, door_pickup_price, door_return_price, driver_price, driver_total_price, total_price, coupon_id, coupon_sn, discount_price, pay_amount(**v1.7.3 优惠券字段**), insurance_level, pickUpAddress, returnAddress, pickUpTime, returnTime}` |
+| 失败 | `{code:-1, msg:'参数缺失'}` / `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` / `400 {"code":400,"msg":"车辆不存在，无法结算"}` / `400 {"code":400,"msg":"车辆整备费配置异常，请联系客服"}` / **券不可用时 `400 {"code":400,"msg":"优惠券已使用" 等（v1.7.3）}`** |
 | 备注 | **本接口的返回对象可直接作为 `/createOrder` 的 `checkOutArray` 传入**（字段名已对齐） |
+| **`couponSn` 参数（v1.7.3）** | 可选，用户在券包里选中的**券码**（`coupon_sn`）。服务端校验「归属本人 + 未使用 + 未作废 + 在有效期内 + 适用于该车辆」后计算优惠：**`discount_price = min(券面额, total_price)`、`pay_amount = total_price - discount_price`**。**`total_price` 仍是原价**，支付请用 `pay_amount`。**每单最多使用一张券** |
 | **v1.6.18 计价公式** | **总费用 = 车辆日租金 × 天数 + 保险日单价 × 天数 + 司机日单价 × 天数 + 整备费**。ⓘ **整备费是「按订单一次性」收取，不乘天数**；其余三项都乘天数 |
 | **v1.6.18 保险费来源** | 保险金额改为**按车辆配置**（后台车辆管理里配），`insuranceLevel` 传 `l1`（低档）/ `l2`（高档），**缺省或不传 = 低档 l1**。已**取消“不买保险”**，用户必须二选一 |
 | **v1.6.18 保险费兼容说明** | 旧参数 `insurancePrice`（传金额）不再作为金额使用：为兼容老版本，**金额 ≥100 视为 `l2`，否则视为 `l1`**，实际计费仍按车辆配置。**建议前端尽快改为传 `insuranceLevel`** |
@@ -335,6 +337,44 @@ async onGetPhone(e) {
 
 ---
 
+## 4.5 优惠券 ⭐ v1.7.3 新增
+
+**概念**：`coupon_id` = 券**批次号**（后台创建）；`coupon_sn` = 用户领到的**唯一券码**，结算与下单都用它。
+
+**流程**：首页 banner → `GET /getCouponList` 展示可领券 → 点击 `POST /receiveCoupon` 领券拿到 `coupon_sn` → 结算页 `GET /getUserCoupons?carId=` 选券 → `GET /checkout?...&couponSn=` 试算 → `POST /createOrder`（checkOutArray 里带上 `coupon_sn`）正式核销。
+
+### 4.5.1 可领取券列表
+
+| 项 | 内容 |
+|---|---|
+| 方法 / 路径 | `GET /getCouponList` |
+| 参数 | `uid`（必填） |
+| 成功 | `{code:200, result:[{coupon_id, name, amount, remain_stock, per_limit, my_received, can_receive, receive_start_time, receive_end_time, use_start_time, use_end_time, scope_type}], total}` |
+| 说明 | 只返回**活动中**且在领取时间内的批次；`can_receive` 已综合「剩余库存 > 0」与「未达限领张数」，前端直接用它决定按钮能否点击 |
+| 失败 | `{code:400, msg:'缺少参数：uid'}` |
+
+### 4.5.2 领取优惠券
+
+| 项 | 内容 |
+|---|---|
+| 方法 / 路径 | `POST /receiveCoupon` |
+| 参数 | body `{uid, couponId}`（`couponId` 即 `coupon_id` 批次号） |
+| 成功 | `{code:200, msg:'领取成功', result:{coupon_sn, coupon_id, name, amount, use_start_time, use_end_time}}` |
+| 失败 | `400 {"code":400,"msg":"优惠券不存在或不在活动时间内"}` / `{"msg":"优惠券已被领完"}` / `{"msg":"已达每人限领张数"}` / `{"msg":"领取失败，请稍后重试"}` |
+| 说明 | 库存**原子扣减** + 限领双重校验（含唯一键兜底），并发不会超发；领到手的券绑定当前用户，换设备也能在「我的券包」看到 |
+
+### 4.5.3 我的券包
+
+| 项 | 内容 |
+|---|---|
+| 方法 / 路径 | `GET /getUserCoupons` |
+| 参数 | `uid`（必填）、`carId`（可选，只返回**该车辆可用**的券，结算页用它过滤）、`status`（可选：0未使用/1已使用/2已作废） |
+| 成功 | `{code:200, result:[{coupon_sn, coupon_id, name, amount, scope_type, use_start_time, use_end_time, status, status_text, usable}], total}` |
+| 说明 | `usable` 已综合考虑状态与有效期，前端直接据此置灰不可选的券 |
+| 失败 | `{code:400, msg:'缺少参数：uid'}` |
+
+> **金额口径提醒**：`/checkout` 与 `/createOrder` 返回的 **`total_price` 是原价**，用券后请用 **`pay_amount`（实付）** 传给 `/getWxPay` 支付，否则服务端会拦截并提示「支付金额与订单金额不一致」。券抵扣后应付为 0 时暂不支持下单（返回 `400` 并自动退券）。
+
 ## 5. 文件上传与 OCR 识别
 
 ### 5.1 上传图片
@@ -384,6 +424,9 @@ async onGetPhone(e) {
 | v1.6.12 | 2026-10-18 | `GET /checkout` | 租用天数改为**按 24 小时向上取整且至少 1 天**（`rentDay` 变整数）；时间倒挂/取还相同/时间非法/保险或司机金额不在白名单均返回 `400 + msg` | **需要**：① 若有依赖小数天数的展示请改为整数；② 新增的 400 错误按 `res.msg` 提示用户 |
 | v1.6.12 | 2026-10-18 | `POST /createOrder` | **金额改由服务端重算**，忽略前端传来的 `rentDay`/`rent_total_price`/`total_price`；新增时间与金额白名校验的 400 错误 | **需要**：支付前务必用 `result`（或 `/getOrderDetail`）返回的 `total_price` 下单支付，**不要**用本地计算值，否则支付回调金额核验会失败 |
 | v1.7.0 | 2026-10-25 | `GET /tryLogin` | **不再自动注册**：已有账号仍返回 `200 + result（含 id=uid）`；**尚无账号返回 `202`，不再创建账号** | **需要**：登录逻辑改为 if code===200 进首页、else if code===202 走注册（否则新用户永远拿不到 uid） |
+| v1.7.3 | 2026-10-25 | `GET /checkout` / `POST /createOrder` | **支持使用优惠券**：新增可选参数 `couponSn`（券码），服务端校验后返回 `coupon_id`/`coupon_sn`/`discount_price`（优惠额）/**`pay_amount`（实付）**；**`total_price` 仍是原价**。券不可用时返回 400 具体原因（已使用/已过期/不适用该车辆等）。每单最多一张 | **需要**：① 结算页加选券入口；② **支付金额改用 `pay_amount`**（继续用 total_price 会被服务端拦截），实付金额展示也用它 |
+| v1.7.3 | 2026-10-25 | `GET /getCouponList`（新增）、`POST /receiveCoupon`（新增）、`GET /getUserCoupons`（新增） | 首页 banner 可领券列表 → 领券返回唯一券码 `coupon_sn` → 我的券包（`carId` 过滤该车可用券，结果含 `usable` 便于置灰） | **需要**：首页 banner 下方加领券入口，结算页加选券组件 |
+| v1.7.3 | 2026-10-25 | `GET /getWxPay` | **服务端开始校验金额**：传入的 `totalFee`（分）必须等于订单实付 `pay_amount`×100，不符直接返回 `success:false`。此前完全信任前端传值 | **需要**：用券订单必须传由 `pay_amount` 换算的金额（无券订单 `pay_amount` = `total_price`，不受影响） |
 | v1.7.2 | 2026-10-25 | `GET /tryLogin` | **202 响应字段语义修正**：由 `needPhone:true` 改为 `needRegister:true`（= 该微信**尚未注册账号**）+ `registerBy:'phone'`（注册方式）；`needPhone` 保留为等价兼容字段；msg 改为「该微信尚未注册账号，请先注册」 | **否（兼容）**：旧判断 `needPhone` 仍有效；但**建议**改用 `needRegister`，并把按钮文案从「请填写手机号」改为「注册 / 还没有账号」，否则用户会以为是补手机号 |
 | v1.7.0 | 2026-10-25 | `GET /loginByPhone`（**新接口，注册主入口**） | 传 `code`（`getPhoneNumber` 回调）+ `openid`(+`unionid`)，服务端换手机号后按手机号注册/登录并绑定 openid，返回 `200 + result（含 id=uid）` | **需要**：登录页加 `<button open-type="getPhoneNumber">`，把 `e.detail.code` 传给本接口；code 一次性，勿缓存 |
 | v1.7.0 | 2026-10-25 | `GET /bindPhone`（**新接口**） | 已登录用户补填手机号（`uid` + `code`），老用户（无手机号）可选接入 | 否（可选；若想补齐老用户手机号则接入） |
@@ -413,4 +456,6 @@ async onGetPhone(e) {
 8. 支付：`/getWxPay` → `wx.requestPayment` → `/queryWxPayOrder` 确认 `trade_state=SUCCESS`
 9. 订单：`/getOrderList`、`/getOrderDetail` 确认状态展示正确
 10. 认证：`/upload` → `/getIdCardInfo` → `/updateUserDriverInfo`（返回 `0` 即成功）
-11. 异常：下架某车后从历史入口下单，应收到 `400 该车辆已下架，暂不可预订`
+11. 优惠券：`GET /getCouponList`（可领列表）→ `POST /receiveCoupon`（拿 `coupon_sn`）→ `GET /getUserCoupons?carId=`（结算页可用券）→ `/checkout?couponSn=` 确认 `discount_price`/`pay_amount` → `/createOrder` 下单后券变「已使用」
+12. 优惠券边界：券面额 ≥ 订单金额时 `/createOrder` 应返回 `400 应付金额为 0`；用过的券再结算应返回 `400 优惠券已使用`
+13. 异常：下架某车后从历史入口下单，应收到 `400 该车辆已下架，暂不可预订`

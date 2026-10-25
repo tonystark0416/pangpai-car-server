@@ -12,6 +12,9 @@
         <el-menu-item index="/cars">
           <span>车辆管理</span>
         </el-menu-item>
+        <el-menu-item index="/coupons">
+          <span>优惠券管理</span>
+        </el-menu-item>
         <el-menu-item index="/users">
           <span>用户管理</span>
         </el-menu-item>

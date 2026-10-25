@@ -8,6 +8,7 @@ const auth = require('../../controllers/admin/auth.controller');
 const user = require('../../controllers/admin/user.controller');
 const car = require('../../controllers/admin/car.controller');
 const order = require('../../controllers/admin/order.controller');
+const coupon = require('../../controllers/admin/coupon.controller');
 
 const router = express.Router();
 
@@ -32,6 +33,13 @@ router.post('/cars', asyncHandler(car.create));
 router.put('/cars/:id', asyncHandler(car.update));
 router.put('/cars/:id/status', asyncHandler(car.updateStatus));
 router.delete('/cars/:id', asyncHandler(car.remove));
+
+// 优惠券管理（v1.7.3）
+router.get('/coupons', asyncHandler(coupon.list));
+router.post('/coupons', asyncHandler(coupon.create));
+router.get('/coupons/:id', asyncHandler(coupon.detail));
+router.put('/coupons/:id', asyncHandler(coupon.update));
+router.put('/coupons/:id/status', asyncHandler(coupon.updateStatus));
 
 // 订单管理
 router.get('/orders', asyncHandler(order.list));

@@ -100,9 +100,15 @@ function resolveInsurance(carInfo, insuranceLevel, insurancePrice) {
  * @param {string} [p.insuranceLevel] 保险档位：'l1' 低档 / 'l2' 高档，缺省 l1
  * @param {number|string} [p.insurancePrice] 旧版保险金额入参（仅用于推断档位，金额以车辆配置为准）
  * @param {number} [p.driverPrice] 司机日单价（白名单 0 / 400）
+ * @param {object} [p.coupon] v1.7.3 本次使用的优惠券 {coupon_id, coupon_sn, amount}；
+ *        可用性由 coupon.service 校验后传入，本服务只负责算钱。**每单最多一张**
  * @returns {object} 与 /checkout 响应字段一致的计价结果
+ *
+ * v1.7.3 优惠券金额口径：total_price 仍为**原价**（GMV/报表口径不变），另产出
+ *   discount_price = min(券面额, total_price)     // 抵扣不超过应付，不出现负数
+ *   pay_amount     = total_price - discount_price  // 实付金额，支付核验与退款均以此为准
  */
-async function calcOrderPrice({ carId, pickUpTime, returnTime, insuranceLevel, insurancePrice, driverPrice = 0 }) {
+async function calcOrderPrice({ carId, pickUpTime, returnTime, insuranceLevel, insurancePrice, driverPrice = 0, coupon = null }) {
   const carInfo = await car.getCarInfo(carId);
   if (!carInfo) {
     throw new PriceError('车辆不存在，无法计价');
@@ -132,7 +138,16 @@ async function calcOrderPrice({ carId, pickUpTime, returnTime, insuranceLevel, i
     rent_total_price + server_total_price + driver_total_price + clean_price
   );
 
+  // v1.7.3 优惠券抵扣：不超过应付金额，保证实付不为负
+  const discount_price = coupon ? round2(Math.min(Number(coupon.amount) || 0, total_price)) : 0;
+  const pay_amount = round2(total_price - discount_price);
+
   return {
+    // 优惠券信息（无券时为 null / 0，保持字段存在以免前端判空）
+    coupon_id: coupon ? coupon.coupon_id : null,
+    coupon_sn: coupon ? coupon.coupon_sn : null,
+    discount_price,
+    pay_amount,
     rent_day_price,
     rentDay,
     rent_total_price,

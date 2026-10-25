@@ -387,8 +387,13 @@ async function getDashboardStats() {
     const [orderToday] = await db.query(
       'SELECT COUNT(*) AS v FROM pp_order WHERE DATE(create_time) = CURDATE()'
     );
+    // v1.7.3：同时给出「原价销售额 GMV」与「实收金额」，避免优惠券把营收数字算多
     const [paidToday] = await db.query(
-      'SELECT COUNT(*) AS v, IFNULL(SUM(total_price),0) AS amount FROM pp_order WHERE pay_status = 1 AND DATE(pay_time) = CURDATE()'
+      `SELECT COUNT(*) AS v,
+              IFNULL(SUM(total_price),0) AS amount,
+              IFNULL(SUM(pay_amount),0) AS paid_amount,
+              IFNULL(SUM(discount_price),0) AS discount
+       FROM pp_order WHERE pay_status = 1 AND DATE(pay_time) = CURDATE()`
     );
     return {
       userTotal: userTotal.v,
@@ -398,6 +403,9 @@ async function getDashboardStats() {
       orderToday: orderToday.v,
       paidToday: paidToday.v,
       paidTodayAmount: Number(paidToday.amount),
+      // v1.7.3 新增（可选字段，老前端忽略即可）
+      paidTodayRealAmount: Number(paidToday.paid_amount),
+      paidTodayDiscount: Number(paidToday.discount),
     };
   } finally {
     db.close();

@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.7.2 ｜ 日期：2026-10-25 ｜ 状态：迭代中
+> 版本：v1.7.3 ｜ 日期：2026-10-25 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -193,11 +193,14 @@ uid 已就绪
 | 接口 | 方法 | 说明 |
 |---|---|---|
 | `/getCarList` | GET | 车辆分页列表（每页 10 条，**v1.6.7 起仅返回上架车辆 `status=1`，按 `sort` 升序、同 sort 按 id 倒序**） |
-| `/checkout` | GET | 结算计价（**v1.6.12：天数按 24h 向上取整且≥1 天；金额服务端重算；校验时间先后与保险/司机白名单**） |
+| `/checkout` | GET | 结算计价（**v1.6.12：天数按 24h 向上取整且≥1 天；金额服务端重算；校验时间先后与保险/司机白名单**；**v1.7.3：可选 `couponSn` 券码，返回 `discount_price` 优惠额与 `pay_amount` 实付**） |
+| `/getCouponList` | GET | **v1.7.3 新增**：可领取的券批次列表（`uid`），返回面额/库存/限领及当前用户 `my_received`、`can_receive` |
+| `/receiveCoupon` | POST | **v1.7.3 新增**：领券（body `{uid, couponId}`），**原子扣库存 + 限领校验**，成功返回唯一券码 `coupon_sn` |
+| `/getUserCoupons` | GET | **v1.7.3 新增**：我的券包（`uid`；`carId` 只返回该车可用的券；`status` 可筛选 0未用/1已用/2作废），返回 `usable` 供前端置灰 |
 | `/getInsurancePrice` | GET | 保险报价（**v1.6.18：传 `carId` 时按该车辆配置返回**，缺省系统默认 L1 100 / L2 200 元/天） |
 | `/getCarFee` | GET | **v1.6.18 新增**：一次返回车辆的 `clean_price`（整备费，一次性）+ `insurancePrice_l1/l2`（保险日单价） |
 | `/getDriverPrice` | GET | 司机服务报价（当前硬编码 400 元/天） |
-| `/createOrder` | POST | 创建订单，body 为 `{checkOutArray: {...结算结果}}`，缺参返回 400（**v1.6.12：金额取服务端重算结果，不采信前端传价**；**v1.7.1：`contact_phone` 为结算页手填值，服务端不做账号手机号兜底**） |
+| `/createOrder` | POST | 创建订单，body 为 `{checkOutArray: {...结算结果}}`，缺参返回 400（**v1.6.12：金额取服务端重算结果，不采信前端传价**；**v1.7.1：`contact_phone` 为结算页手填值，服务端不做账号手机号兜底**；**v1.7.3：`checkOutArray.coupon_sn` 携带券码时校验并核销，落库 `discount_price`/`pay_amount`**） |
 | `/getOrderList` | GET | 按 uid 分页查询订单 |
 | `/getOrderDetail` | GET | 按 orderSn + uid 查订单详情（含车辆信息、格式化时间） |
 | `/getOrderList` | GET | 分页查订单列表：`uid` + `pageNumber`；**v1.6.17 新增可选筛选** `pay_status` / `order_status`（支持逗号分隔多值、非法值忽略，不传等同旧行为），响应新增可选字段 `total`/`page`/`pageSize` |
@@ -215,6 +218,36 @@ uid 已就绪
 **订单联系电话 `contact_phone`（v1.7.1 明确口径）**：结算页由**用户手工填写**，原样落入 `pp_order.contact_phone`。**服务端不做任何默认值填充**（不会用 `pp_user.phone` 兜底），前端也不要拿账号手机号自动回填——账号手机号是登录凭证，与本次实际用车人可能不同（代人订车、公司用车）。目前后端不校验格式，前端需保证传 11 位手机号、不传空值或 `"undefined"`。
 
 **订单号规则**：`PP + yyyyMMddHHmmss`（精确到秒，无随机位）。
+
+#### 优惠券（v1.7.3）
+
+**概念**：`coupon_id` = 券**批次号**（后台一次性创建，含面额/库存/时间/范围）；`coupon_sn` = 用户领到手的**唯一券码**（每次领券生成一张）。
+
+**批次状态流转**：`未开始(0) → 活动中(1) → 已废弃(2)`，均由后台手工切换，**已废弃不可逆**。
+
+| 环节 | 规则 |
+|---|---|
+| 领取 | 仅「活动中」且在领取时间窗口内的批次可领；每人限领 `per_limit` 张；库存原子扣减（`UPDATE ... WHERE remain_stock > 0`），扣不到即已领完 |
+| 使用范围 | `scope_type=1` 全场通用；`=2` 仅指定车辆（逗号分隔 id）；**领券时把面额/范围/有效期快照到用户券**，批次后续改动不影响已领权益 |
+| 每单张数 | **每单最多使用一张**，`/checkout` 与 `/createOrder` 只接收单个 `couponSn` |
+| 有效期 | 必须在 `use_start_time ~ use_end_time` 内，过期不可使用 |
+| 废弃连带 | 后台废弃批次时，该批次下用户**已领未用**的券一并作废（`status=2`） |
+| 退款 | 订单退款成功后券**退回账户可再次使用**；券有效期已过则不退回（避免留下用不了的脏券） |
+| 限用 | 每人可用 `use_per_limit` 张（字段已落地，本期未做跨单累计校验） |
+
+**金额口径（关键）**：
+
+```
+discount_price = min(券面额, total_price)       // 抵扣不超过应付，不出现负应付
+pay_amount     = total_price - discount_price   // 实付，支付核验与退款均以此为准
+total_price                                     // 保持原价不变，GMV/报表口径不受影响
+```
+
+资金链路同步调整：① `/getWxPay` 服务端校验传入金额等于订单 `pay_amount`×100（此前完全信任前端传值）；② 支付回调金额核验与 ③ 微信退款的 `total_fee` 均改用 `pay_amount`（否则券订单退款会失败）。历史订单 `pay_amount` 已回填为 `total_price`，无券订单口径完全不变。
+
+**边界**：券抵扣后 `pay_amount = 0` 时**暂不支持**（微信支付不接受 0 元下单），`/createOrder` 返回 `400` 并自动把券退回账户。
+
+**并发安全**：库存靠原子 UPDATE 防超发；限领靠 `COUNT` + 唯一键 `uk_coupon_uid_seq(coupon_id, uid, receive_seq)` 双保险，且限领拦截时会把已扣库存加回（否则库存被白白扣掉）；核销靠 `UPDATE ... WHERE status=0` 防止同一张券被用于多笔订单。
 
 ### 2.3 支付
 
@@ -284,9 +317,14 @@ uid 已就绪
 | `/admin-api/orders/:id/status` | PUT | 订单履约状态流转（待取车→已取车→已还车→已完成/已取消） |
 | `/admin-api/orders/:id/address` | PUT | **修改取车/还车地址**（v1.6.10，body `{pickup_address?, return_address?}`，可单改一个；校验非空且 ≤100 字符） |
 | `/admin-api/orders/:id/refund` | POST | **后台退款**（v1.6.11，body `{refund_desc?, refund_fee?}`，refund_fee 单位元、缺省全额；**不校验任何订单状态**） |
-| `/admin-api/orders/export` | GET | **导出订单 Excel**（v1.6.13，`.xlsx`）。参数同列表 `pay_status/order_status/keyword`，额外 `scope=all` 时忽略条件导出全部；上限 20000 条；返回文件流需 `responseType=blob` |
+| `/admin-api/orders/export` | GET | **导出订单 Excel**（v1.6.13，`.xlsx`）。参数同列表 `pay_status/order_status/keyword`，额外 `scope=all` 时忽略条件导出全部；上限 20000 条；返回文件流需 `responseType=blob`；**v1.7.3 起导出含「优惠券金额 / 实付金额 / 优惠券码」三列** |
+| `/admin-api/coupons` | GET | **优惠券批次列表**（v1.7.3，分页；筛选 `name`（匹配名称或批次号）、`status`；附带已领 `received_count`、已用 `used_count`） |
+| `/admin-api/coupons` | POST | **创建券批次**（v1.7.3）：`name`/`amount`/`total_stock`/`receive_start_time`~`receive_end_time`/`use_start_time`~`use_end_time`/`scope_type`(1全场 2指定车辆)/`scope_car_ids`/`per_limit`/`use_per_limit`/`user_scope`(预留)/`bear_type`(默认 platform) |
+| `/admin-api/coupons/:id` | GET | 批次详情 |
+| `/admin-api/coupons/:id` | PUT | 编辑批次：**仅「未开始」状态可改规则**；「活动中」只允许追加库存 |
+| `/admin-api/coupons/:id/status` | PUT | **状态流转**（body `{status: 0未开始 \| 1活动中 \| 2已废弃}`）：已废弃不可逆；**废弃时连带作废该批次下用户已领未用的券** |
 
-管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）。列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
+管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）+ **优惠券管理（v1.7.3：批次列表/新建/编辑/开始活动/废弃）**。列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
 
 #### 既有运营接口
 
@@ -316,10 +354,12 @@ uid 已就绪
 | 表名 | 用途 | 字段 |
 |---|---|---|
 | `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time, **status(上下架：1上架 0下架，v1.6.7)**, **sort(排序值 1~10000 整数，越小越靠前，v1.6.7)** |
-| `pp_order` | 租车订单 | 全部 23 字段均已加中文注释（v1.6.6）：id=订单ID, order_sn=订单号（PP+yyyyMMddHHmmss）, uid=下单用户ID（adp_user.id）, contact_phone=联系电话, car_id=车辆ID（pp_car.id）, rent_day=租车天数（**varchar(5)**）, rent_day_price=车辆日租金单价, rent_total_price=车辆租金合计, server_day_price=保险费单价（每天）, server_total_price=保险费合计, driver_price=司机服务费单价（每天）, driver_total_price=司机服务费合计, **clean_price=整备费快照（v1.6.18 新增，v1.6.19 调整至司机合计之后、总价之前）**, total_price=订单总价, **pay_status=支付状态 0待支付 1已支付 2已退款 3支付失败（v1.5.0）**, **transaction_id=微信支付单号**, **pay_time=支付时间**, **order_status=履约状态 0待取车 1已取车 2已还车 3已完成 4已取消（v1.5.0）**, create_time=创建时间, update_time=更新时间, pickup_address=取车地址(100), return_address=还车地址(100), pickup_time=取车时间（**varchar(50)，毫秒时间戳字符串**）, return_time=还车时间 |
+| `pp_order` | 租车订单 | 全部 23 字段均已加中文注释（v1.6.6）：id=订单ID, order_sn=订单号（PP+yyyyMMddHHmmss）, uid=下单用户ID（adp_user.id）, contact_phone=联系电话, car_id=车辆ID（pp_car.id）, rent_day=租车天数（**varchar(5)**）, rent_day_price=车辆日租金单价, rent_total_price=车辆租金合计, server_day_price=保险费单价（每天）, server_total_price=保险费合计, driver_price=司机服务费单价（每天）, driver_total_price=司机服务费合计, **clean_price=整备费快照（v1.6.18 新增，v1.6.19 调整至司机合计之后、总价之前）**, total_price=订单总价（**原价；v1.7.3 起实付另看 pay_amount**）, **coupon_id=优惠券批次号（v1.7.3）**, **coupon_sn=优惠券码（v1.7.3）**, **discount_price=优惠金额（v1.7.3）**, **pay_amount=实付金额=total_price-discount_price（v1.7.3，支付核验与退款以此为准；历史订单已回填为 total_price）**, **pay_status=支付状态 0待支付 1已支付 2已退款 3支付失败（v1.5.0）**, **transaction_id=微信支付单号**, **pay_time=支付时间**, **order_status=履约状态 0待取车 1已取车 2已还车 3已完成 4已取消（v1.5.0）**, create_time=创建时间, update_time=更新时间, pickup_address=取车地址(100), return_address=还车地址(100), pickup_time=取车时间（**varchar(50)，毫秒时间戳字符串**）, return_time=还车时间 |
 | `pp_user` | 庞派用户（v1.6.15 从 `adp_user` 迁出，保留原主键） | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), **phone(20)（v1.7.0 起为账号唯一标识，唯一索引 `uk_phone`）**, create_time, update_time |
 | `pp_user_auth` | 用户授权表（一个小程序一行） | id, user_id(关联 pp_user.id), biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 `uk_biz_openid(biz_code, openid)`，另有 idx_user / idx_unionid |
 | `pp_driver` | 驾驶证信息 | id, user_id, driver_idcard_name(10), driver_idcard_number(50), driver_idcard_url(200), driver_idcard_birth(20), create_time, update_time |
+| `pp_coupon` | **优惠券批次表**（v1.7.3） | id, **coupon_id=批次号(唯一)**, name=券名称, amount=面额, **threshold=门槛（预留，本期不校验）**, total_stock/remain_stock=总库存/剩余库存, per_limit=每人限领, use_per_limit=每人可用, receive_start_time/receive_end_time=可领时间, use_start_time/use_end_time=可用时间, scope_type=使用范围(1全场 2指定车辆), scope_car_ids=适用车辆(逗号分隔), **user_scope=适用人群 0全部 1新用户 2老用户（预留）**, **bear_type=成本承担方 默认 platform（预留）**, status=状态(0未开始 1活动中 2已废弃), create_time, update_time |
+| `pp_user_coupon` | **用户优惠券表**（v1.7.3） | id, **coupon_sn=券码(唯一)**, coupon_id=批次号, uid=领取用户, name/amount/scope_type/scope_car_ids/use_start_time/use_end_time=**领券时快照**（批次后续改动不影响已领权益）, status=状态(0未使用 1已使用 2已作废), receive_time=领取时间, use_time=使用时间, order_sn=使用订单, **receive_seq=该用户领本批次的第几张**, create_time, update_time；唯一键 `uk_coupon_sn`、`uk_coupon_uid_seq(coupon_id,uid,receive_seq)` 防超领 |
 
 > 已迁出：`adp_user` / `adp_user_auth` / `adp_admin_user` 为其他项目在用，数据未删、代码不再引用（v1.6.15）。
 >
@@ -408,6 +448,7 @@ uid 已就绪
 | v1.6.15 | 2026-10-24 | 用户体系拆分：庞派用户从共用表 `adp_user` / `adp_user_auth` / `adp_admin_user` 迁出到独立的 `pp_user` / `pp_user_auth` / `pp_admin_user`，adp_ 表保留给其他项目且**数据未做任何删除或修改**。迁移脚本 `scripts/migrate_user_to_pp.js`（先建库内备份表 + 导出离线 SQL，再 `CREATE TABLE ... LIKE` 建新表，按「有 pp 授权 ∪ 被 pp_order/pp_driver 引用」的口径迁移并**保留原主键 id**，幂等可重复执行补迁窗口期数据，最后校正 AUTO_INCREMENT）。代码侧替换 `user.model.js`（6 处 SQL）与 `admin.model.js`（11 处 SQL），`local-dev-init.sql` 同步改为建 pp_ 表 | 实测：备份表 63/62/1 行；迁入 pp_user 62 行、pp_user_auth 62 行、pp_admin_user 1 行；订单 7/45、驾驶证 1/2 关联成功（未关联的 uid 61/123 在**旧表本来就不存在**，属历史孤儿数据，非迁移丢失）；后台登录、用户列表、订单详情 join、小程序 openid 登录/新注册 全部正常 |
 | v1.6.16 | 2026-10-24 | 新增 C 端「取消订单」接口 `POST /cancelOrder`：仅用于**未支付**订单（不涉及资金），校验归属 uid + `pay_status=0` + `order_status=0`，通过后仅置 `order_status=4`（已取消）；`order.model.cancelUnpaidOrder` 的 UPDATE 条件自带状态断言，杜绝并发下误改已支付/已取车订单。与 `/cancelRefund` 按支付状态严格分流，避免「钱没退、单却取消了」 | 实测：未支付待取车 → 200 已取消且落库 order_status=4；重复取消 → 400 订单已取消；已支付订单 → 400 引导走 /cancelRefund；未支付已取车 → 400 提示联系客服；越权 403；不存在 404；缺参 400（测试订单已删除） |
 | v1.6.17 | 2026-10-25 | C 端 `GET /getOrderList` 支持状态筛选：新增可选入参 `pay_status` / `order_status`（支持逗号分隔多值，白名单外的值忽略），筛选在 **SQL 层**完成（全局筛选而非当前页过滤），不传参数行为与旧版完全一致；响应新增可选字段 `total` / `page` / `pageSize` 便于前端分页 | 实测：不传筛选 total=4 与旧版一致；`order_status=4` / `order_status=2,4` / `pay_status=1,2` 均命中 4 条；组合 `pay_status=2&order_status=4` 命中 3 条、`pay_status=1&order_status=4` 命中 1 条；非法值 `pay_status=99` 被忽略（total 仍为 4）；页码为 0 仍返回 201 |
+| v1.7.3 | 2026-10-25 | **新增优惠券功能**：① 新增 `pp_coupon`（批次：面额/库存/领取时间/使用时间/使用范围/每人限领限用/成本承担方预留/状态）与 `pp_user_coupon`（用户券：`coupon_sn` 唯一券码 + 面额范围有效期**快照**）；② `pp_order` 新增 `coupon_id`/`coupon_sn`/`discount_price`/`pay_amount` 四列，历史 45 单 `pay_amount` 已回填为 `total_price`；③ 后台接口 `GET/POST /admin-api/coupons`、`GET/PUT /admin-api/coupons/:id`、`PUT :id/status`（未开始→活动中→已废弃，废弃不可逆且**连带作废用户已领未用券**；活动中只允许追加库存）；④ C 端 `GET /getCouponList`、`POST /receiveCoupon`、`GET /getUserCoupons`；⑤ `/checkout` 与 `/createOrder` 支持 `couponSn`（每单一张），校验归属/状态/有效期/适用范围后**原子核销**，建单失败自动退券；⑥ **资金链路校准**：`/getWxPay` 服务端校验金额等于订单 `pay_amount`×100（此前完全信任前端）、支付回调核验与微信退款 `total_fee` 均改用 `pay_amount`（**不改则券订单退款必然失败**）；⑦ 退款成功后券退回账户（券已过期则不退回）；⑧ 导出 Excel 增加「优惠券金额/实付金额/优惠券码」三列，订单详情返回 `coupon_name`/`coupon_amount`，概览新增实收与优惠统计；⑨ admin-web 新增「优惠券管理」页；⑩ 迁移脚本 `scripts/migrate_coupon.js`（幂等，含 `SET NAMES utf8mb4` 防注释乱码） | 金额口径：**`total_price` 保持原价不变**，新增 `discount_price`（抵扣）与 `pay_amount`（实付），GMV/报表口径不受影响。实测 12 步全通：建批次→可领列表→领券拿券码→重复领被拒→库存 10→9→券包→结算（原价648-优惠50=实付598）→下单核销→重复使用被拒→退款退券→批次废弃连带作废，测试数据已清理。**边界**：券抵扣后应付=0 暂不支持（返回 400 并退券）。**待前端接入**：首页 banner 领券、结算页选券（`pay_amount` 是新的支付金额口径） |
 | v1.7.2 | 2026-10-25 | **登录/注册语义修正**：`GET /tryLogin` 的 `202` 原字段 `needPhone:true` 名不副实——它表达的是「**该微信尚未注册账号**」，手机号只是注册手段而非目的。现改为 `{code:202, msg:'该微信尚未注册账号，请先注册', needRegister:true, registerBy:'phone'}`，其中 `needRegister` 为主语义（有没有账号）、`registerBy` 说明注册方式（当前固定 `phone`，未来加验证码等方式只扩展该字段、202 语义不变），`needPhone` 保留为等价兼容字段。文档侧把流程拆清为「登录 = `/tryLogin`（查有没有账号）／注册 = `/loginByPhone`（建号并绑定）」 | 接口路径与 200/202 状态码不变，仅响应字段与文案调整，前端已按 `needPhone` 接入的不受影响；建议前端文案改为「请先注册 / 还没有账号」而非「请填写手机号」 |
 | v1.7.1 | 2026-10-25 | 明确订单联系电话口径（**无代码改动，后端行为本就如此，仅固化约定**）：结算页的 `contact_phone` **由用户手工填写**，服务端**不做任何默认值填充**（不会用 `pp_user.phone` 兜底），前端也不要拿账号手机号自动回填——账号手机号是登录凭证，可能与本次实际用车人不同（代人订车/公司用车）。文档同步至需求文档 2.2 节与小程序接口文档 `/checkout`、`/createOrder` 两处 | 前端结算页保持手填输入框、不做默认回填即可；**注意**：后端当前不校验格式，请前端保证传 11 位手机号、不传空值或 `"undefined"` 字符串（历史上 45 笔订单中 35 笔因此为空号码）。如需要后端强校验（非法号码返回 400）可另行提出 |
 | v1.7.0 | 2026-10-25 | 文档同步（无代码改动）：① `docs/requirements.md` 2.1 节补全登录流程——**A 新用户**（`wx.login` → `/getOpenid` → `/tryLogin` 收 202 → 手机号授权 → `/loginByPhone`）、**B 老用户**（`/tryLogin` 收 200 直接进，行为不变）、**C 换设备/换微信**（同号回落原 uid）、**D 登录后完整业务调用链**（选车→结算→下单→支付→订单→取消/退款），全部以「步骤 + 接口 + 返回」表格化；② `docs/api-for-miniprogram.md` 新增 **1.0 登录流程总览**（ASCII 时序图 + 四张调用顺序表），联调自测清单拆为老用户/新用户/换号验证/补手机号四条；③ 顺带修正：数据库设计一节由 `adp_user`/`adp_user_auth` 改为 `pp_user`/`pp_user_auth` 并标注 `uk_phone`，接口文档适用版本更新为 v1.7.0 | 便于后续维护与前端接入；判断新老用户只看 `/tryLogin` 的 code：200=已注册，202=未注册需手机号授权 |

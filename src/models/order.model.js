@@ -10,13 +10,15 @@ const car = require('./car.model.js');
  * v1.6.8：下单前校验车辆上架状态，已下架车辆不允许下单
  * v1.6.12：**金额以服务端计价结果为准**，不再采信前端传来的价格
  * @param {*} checkOutData 结算计价信息整个传入
- * @param {object} price pricing.service.calcOrderPrice 的返回（服务端权威计价）
+ * @param {object} price pricing.service.calcOrderPrice 的返回（服务端权威计价，v1.7.3 起含优惠券信息）
+ * @param {string} [presetOrderSn] 外部指定的订单号（v1.7.3：核销券要先拿到订单号，故由控制器生成后传入）
  * @returns 订单对象；-2=车辆不存在；-3=车辆已下架；undefined=写入失败
  */
-async function createOrder(checkOutData, price) {
+async function createOrder(checkOutData, price, presetOrderSn) {
     const db = new MySQL();
-    const order_sn = genOrderSn(); //获取订单号
-    const sqlCreateOrder = 'INSERT INTO pp_order (order_sn,uid,contact_phone,car_id,rent_day,rent_day_price,rent_total_price,clean_price,server_day_price,server_total_price,driver_price,driver_total_price,total_price,pickup_address,return_address,pickup_time,return_time) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
+    const order_sn = presetOrderSn || genOrderSn(); //获取订单号
+    // v1.7.3：新增优惠券 4 列（批次号、券码、抵扣额、实付额）
+    const sqlCreateOrder = 'INSERT INTO pp_order (order_sn,uid,contact_phone,car_id,rent_day,rent_day_price,rent_total_price,clean_price,server_day_price,server_total_price,driver_price,driver_total_price,total_price,coupon_id,coupon_sn,discount_price,pay_amount,pickup_address,return_address,pickup_time,return_time) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)';
     const orderData = checkOutData.checkOutArray;
 
     // 车辆可用性校验：不存在 / 已下架（status=0）均拒绝下单
@@ -29,8 +31,10 @@ async function createOrder(checkOutData, price) {
     }
 
     try {
-        // 天数与各项金额一律取服务端重算结果
-        const res = await db.query(sqlCreateOrder, [order_sn, orderData.uid, orderData.contact_phone, orderData.data.id, price.rentDay, price.rent_day_price, price.rent_total_price, price.clean_price, price.server_day_price, price.server_total_price, price.driver_price, price.driver_total_price, price.total_price, orderData.pickUpAddress, orderData.returnAddress, orderData.pickUpTime, orderData.returnTime]);
+        // 天数与各项金额一律取服务端重算结果；优惠券字段取计价服务产出，无券时为 0/null
+        const payAmount = Number(price.pay_amount ?? price.total_price); // 兼容未传 pay_amount 的旧调用
+        // v1.7.3：contact_phone 列为 NOT NULL，缺值时兜底为空串，避免整单创建失败
+        const res = await db.query(sqlCreateOrder, [order_sn, orderData.uid, orderData.contact_phone || '', orderData.data.id, price.rentDay, price.rent_day_price, price.rent_total_price, price.clean_price, price.server_day_price, price.server_total_price, price.driver_price, price.driver_total_price, price.total_price, price.coupon_id || null, price.coupon_sn || null, Number(price.discount_price || 0), payAmount, orderData.pickUpAddress || '', orderData.returnAddress || '', orderData.pickUpTime, orderData.returnTime]);
 
         if (res.affectedRows > 0) {
             const sqlSelectOrder = 'select * from pp_order where id = ?';
@@ -148,6 +152,21 @@ async function getOrderDetail(order_sn, uid) {
             res['update_time'] = format.format(new Date(res['update_time']), 'yyyy-MM-dd HH:mm:ss');
             res['pickup_time'] = format.format(new Date(parseInt(res['pickup_time'])), 'yyyy-MM-dd HH:mm:ss');
             res['return_time'] = format.format(new Date(parseInt(res['return_time'])), 'yyyy-MM-dd HH:mm:ss');
+            // v1.7.3：带上所用优惠券的名称/面额，便于订单详情直接展示（前端无需二次查询）
+            res['coupon_name'] = null;
+            res['coupon_amount'] = 0;
+            if (res.coupon_sn) {
+              const couponRows = await db.query(
+                'SELECT name, amount FROM pp_user_coupon WHERE coupon_sn = ? LIMIT 1',
+                [res.coupon_sn]
+              );
+              if (couponRows[0]) {
+                res['coupon_name'] = couponRows[0].name;
+                res['coupon_amount'] = Number(couponRows[0].amount);
+              }
+            }
+            // 实付金额兜底：历史订单 pay_amount 已回填为 total_price
+            res['pay_amount'] = Number(res.pay_amount ?? res.total_price);
             return res;
         }
     } catch (error) {
@@ -244,6 +263,7 @@ async function cancelUnpaidOrder(order_sn, uid) {
 
 module.exports = {
     createOrder,
+    genOrderSn,
     getOrderDetail,
     getOrderList,
     getOrderBySn,
