@@ -6,6 +6,39 @@
 
 ---
 
+## 文档地图（本文 vs 小程序接口文档）
+
+| 文档 | 主要读者 | 内容 |
+|---|---|---|
+| `docs/requirements.md`（本文） | 项目负责人、**后端迭代** | 需求背景、业务与技术规则、目录结构、表结构、部署流程、已知问题、版本 Change Log |
+| `docs/api-for-miniprogram.md` | **小程序前端开发** | 全部 C 端接口的入参/响应/枚举/错误码、调用先后顺序、联调自测清单、接口 Change Log |
+
+> **分工**：本文回答「**为什么这么做、规则是什么**」；接口文档回答「**具体怎么调**」。
+> **联动约定**：任何改动只要涉及 C 端接口，两处都要更新，且必须在接口文档的 Change Log 登记。
+> **给外部/前端同学时**：优先只给接口文档（不含本文 §3 表结构、§4 部署等内部信息）；确需业务规则时，再单独给本文 §2 相关小节。
+
+## 目录
+
+- [1. 项目概述](#1-项目概述)
+  - [1.1 技术栈](#11-技术栈)
+  - [1.2 目录结构（v1.7.3 重排，标准 Express 分层与管理后台）](#12-目录结构v173-重排标准-express-分层与管理后台)
+  - [1.3 配置管理（v1.1.0）](#13-配置管理v110)
+- [2. 主线业务：租车](#2-主线业务租车)
+  - [2.1 用户与登录](#21-用户与登录)
+  - [2.2 车辆与订单](#22-车辆与订单)
+  - [2.3 支付](#23-支付)
+  - [2.4 运营管理](#24-运营管理)
+  - [2.5 定时任务](#25-定时任务)
+- [3. 数据库设计](#3-数据库设计)
+- [4. 部署](#4-部署)
+  - [4.1 后端（API 服务）](#41-后端api-服务)
+  - [4.2 管理后台（admin-web，v1.6.0 起）](#42-管理后台admin-webv160-起)
+  - [4.3 本地开发](#43-本地开发)
+- [5. 已知问题与风险（迭代 backlog）](#5-已知问题与风险迭代-backlog)
+- [Change Log](#change-log)
+
+---
+
 ## 1. 项目概述
 
 「庞派汽车」是汽车租赁微信小程序的后端服务（对外域名 `https://pangpai-car.com`），核心业务为**线上租车**：用户在小程序登录 → 登记驾驶证 → 选车 → 结算计价 → 创建订单 → 微信支付 → 企业微信通知员工接单。
@@ -28,7 +61,7 @@
 | 管理后台前端 | Vue 3 + Vite + Element Plus + Pinia（`admin-web/`，产物由 Express 托管至 `/admin`） |
 | 其他 | axios、xml2js、md5、date-fns、dayjs、moment |
 
-### 1.2 目录结构（**v1.7.3 重排**，标准 Express 分层 + 管理后台）
+### 1.2 目录结构（v1.7.3 重排，标准 Express 分层与管理后台）
 
 ```
 pangpai-car/
@@ -46,7 +79,8 @@ pangpai-car/
 │   ├── migrate_user_phone_unique.js           # v1.7.0 手机号唯一索引 + 孤儿授权清理
 │   ├── migrate_car_fee_fields.js              # v1.6.18 车辆整备费/保险费字段
 │   ├── migrate_order_clean_price_position.js  # v1.6.19 订单字段顺序调整
-│   └── migrate_coupon.js                      # v1.7.3 优惠券两张表 + 订单 4 列
+│   ├── migrate_coupon.js                      # v1.7.3 优惠券两张表 + 订单 4 列
+│   └── gen_docs_toc.js                        # v1.7.3 文档目录生成/校验（见下）
 ├── https/                       # SSL 证书（不入库）
 ├── uploads/                     # 上传目录（不入库）
 ├── logs/                        # PM2 日志（不入库）
@@ -114,6 +148,13 @@ pangpai-car/
 **新增业务的标准落位（以 v1.7.3 优惠券为例）**：`scripts/migrate_*.js`（建表，幂等）→ `src/models/<模块>.model.js`（SQL）→ `src/services/<模块>.service.js`（规则判定/计算）→ `src/controllers/<模块>.controller.js` + `admin/<模块>.controller.js`（C 端/后台两套）→ `src/routes/<模块>.routes.js` + `admin/index.js`（挂载）→ `admin-web/src/views/<模块>.vue` + `router/index.js` + `AdminLayout.vue`（后台页面）。
 
 **计价相关改动必须收敛到 `services/pricing.service.js`**（`/checkout`、`/createOrder`、后台改价均以此为唯一真源），避免多处算价不一致。
+
+**文档目录用工具维护**：两份文档的「目录」区块由 `scripts/gen_docs_toc.js` 生成，请勿手改其中的锚点——GitHub 的 slug 规则不直观（⭐ 会保留、连续空格会变成连续连字符），手改极易写出跳不过去的链接。
+
+```bash
+node scripts/gen_docs_toc.js check    # 校验两份文档的目录锚点是否都能跳转（建议在提交前跑）
+node scripts/gen_docs_toc.js update   # 新增/改名章节后，一键重写目录区块
+```
 
 ### 1.3 配置管理（v1.1.0）
 
@@ -508,6 +549,7 @@ total_price                                     // 保持原价不变，GMV/报�
 | v1.6.15 | 2026-10-24 | 用户体系拆分：庞派用户从共用表 `adp_user` / `adp_user_auth` / `adp_admin_user` 迁出到独立的 `pp_user` / `pp_user_auth` / `pp_admin_user`，adp_ 表保留给其他项目且**数据未做任何删除或修改**。迁移脚本 `scripts/migrate_user_to_pp.js`（先建库内备份表 + 导出离线 SQL，再 `CREATE TABLE ... LIKE` 建新表，按「有 pp 授权 ∪ 被 pp_order/pp_driver 引用」的口径迁移并**保留原主键 id**，幂等可重复执行补迁窗口期数据，最后校正 AUTO_INCREMENT）。代码侧替换 `user.model.js`（6 处 SQL）与 `admin.model.js`（11 处 SQL），`local-dev-init.sql` 同步改为建 pp_ 表 | 实测：备份表 63/62/1 行；迁入 pp_user 62 行、pp_user_auth 62 行、pp_admin_user 1 行；订单 7/45、驾驶证 1/2 关联成功（未关联的 uid 61/123 在**旧表本来就不存在**，属历史孤儿数据，非迁移丢失）；后台登录、用户列表、订单详情 join、小程序 openid 登录/新注册 全部正常 |
 | v1.6.16 | 2026-10-24 | 新增 C 端「取消订单」接口 `POST /cancelOrder`：仅用于**未支付**订单（不涉及资金），校验归属 uid + `pay_status=0` + `order_status=0`，通过后仅置 `order_status=4`（已取消）；`order.model.cancelUnpaidOrder` 的 UPDATE 条件自带状态断言，杜绝并发下误改已支付/已取车订单。与 `/cancelRefund` 按支付状态严格分流，避免「钱没退、单却取消了」 | 实测：未支付待取车 → 200 已取消且落库 order_status=4；重复取消 → 400 订单已取消；已支付订单 → 400 引导走 /cancelRefund；未支付已取车 → 400 提示联系客服；越权 403；不存在 404；缺参 400（测试订单已删除） |
 | v1.6.17 | 2026-10-25 | C 端 `GET /getOrderList` 支持状态筛选：新增可选入参 `pay_status` / `order_status`（支持逗号分隔多值，白名单外的值忽略），筛选在 **SQL 层**完成（全局筛选而非当前页过滤），不传参数行为与旧版完全一致；响应新增可选字段 `total` / `page` / `pageSize` 便于前端分页 | 实测：不传筛选 total=4 与旧版一致；`order_status=4` / `order_status=2,4` / `pay_status=1,2` 均命中 4 条；组合 `pay_status=2&order_status=4` 命中 3 条、`pay_status=1&order_status=4` 命中 1 条；非法值 `pay_status=99` 被忽略（total 仍为 4）；页码为 0 仍返回 201 |
+| v1.7.3 | 2026-10-26 | **文档可读性整理**：① 两份文档都加了「目录」（全部锚点已校验可跳转），需求文档开头新增「文档地图」表格说明本文与接口文档的分工与交叉索引；② 修正接口文档章节编号冲突（新增的优惠券原误编为 `4.5`，与「查询支付结果」重号，改为 `4.8` 并降级为第 4 章下的三级小节）；③ 新增 `scripts/gen_docs_toc.js`（`check`/`update`/`print` 三个子命令），按 GitHub slug 规则生成锚点，**避免手工写目录导致链接失效**（初版手写的 5 条锚点全部跳不过去，已由工具修正） | 目录锚点请勿手改，新增或改名章节后跑 `update` 即可。两份文档继续保持**拆开**：见「文档地图」中的分工与给外部开发者时的取用建议 |
 | v1.7.3 | 2026-10-26 | **订单联系电话 `contact_phone` 改为必填强校验**：提交订单前校验（未填/空/`"undefined"`/`"null"` → `400 请填写联系人手机号`；位数不对或号段非法 → `400 联系人手机号格式不正确…`），正则 `^1[3-9]\d{9}$`；入参先规范化（`trim`、去空格连字符、去 `+86`/`86` 前缀）后统一落库 11 位纯数字。校验规则抽到新增的 `src/utils/validate.js`，`/checkout` 只规范化不强拦（结算页刚打开时用户还没填），`/createOrder` 做最终拦截 | **背景**：此前完全无校验，前端漏填时把空值/`"undefined"` 直接落库，历史 45 单中 35 单为空号，门店无法联系用车人。实测 13 项全通（5 种合法写法均能下单且落库为 `13800138000`，8 种非法输入全部被拒） |
 | v1.7.3 | 2026-10-25 | **用券规则补充**（用户追加的两条）：① **订单金额 ≤ 券面额 → 该券不可用**（券包置灰 + `/checkout` 与 `/createOrder` 均拒绝并给出原因），使用时要求订单金额**严格大于**面额，从源头杜绝 0 元支付；② **默认不使用优惠券**，必须由用户在结算页**手动选择**（服务端不自动替用户选券、不推荐最大面额券）；③ `/getUserCoupons` 新增可选参数 `amount`（本次订单原价），据此计算 `usable` 并新增 `unusable_reason`（已使用/已作废/已过期/不适用于当前车辆/订单金额需大于优惠券面额）；④ 结算与下单改为「先按不用券算原价 → 校验券（含金额门槛）→ 带券重算实付」，两处口径一致 | 实测 7 项全通：默认不带券时优惠 0、实付=原价；传金额后超大面额券被置灰且结算/下单均被拒（券不会被白白核销）；小额券正常抵扣 648→598 并核销。测试数据已清理 |
 | v1.7.3 | 2026-10-25 | **新增优惠券功能**：① 新增 `pp_coupon`（批次：面额/库存/领取时间/使用时间/使用范围/每人限领限用/成本承担方预留/状态）与 `pp_user_coupon`（用户券：`coupon_sn` 唯一券码 + 面额范围有效期**快照**）；② `pp_order` 新增 `coupon_id`/`coupon_sn`/`discount_price`/`pay_amount` 四列，历史 45 单 `pay_amount` 已回填为 `total_price`；③ 后台接口 `GET/POST /admin-api/coupons`、`GET/PUT /admin-api/coupons/:id`、`PUT :id/status`（未开始→活动中→已废弃，废弃不可逆且**连带作废用户已领未用券**；活动中只允许追加库存）；④ C 端 `GET /getCouponList`、`POST /receiveCoupon`、`GET /getUserCoupons`；⑤ `/checkout` 与 `/createOrder` 支持 `couponSn`（每单一张），校验归属/状态/有效期/适用范围后**原子核销**，建单失败自动退券；⑥ **资金链路校准**：`/getWxPay` 服务端校验金额等于订单 `pay_amount`×100（此前完全信任前端）、支付回调核验与微信退款 `total_fee` 均改用 `pay_amount`（**不改则券订单退款必然失败**）；⑦ 退款成功后券退回账户（券已过期则不退回）；⑧ 导出 Excel 增加「优惠券金额/实付金额/优惠券码」三列，订单详情返回 `coupon_name`/`coupon_amount`，概览新增实收与优惠统计；⑨ admin-web 新增「优惠券管理」页；⑩ 迁移脚本 `scripts/migrate_coupon.js`（幂等，含 `SET NAMES utf8mb4` 防注释乱码） | 金额口径：**`total_price` 保持原价不变**，新增 `discount_price`（抵扣）与 `pay_amount`（实付），GMV/报表口径不受影响。实测 12 步全通：建批次→可领列表→领券拿券码→重复领被拒→库存 10→9→券包→结算（原价648-优惠50=实付598）→下单核销→重复使用被拒→退款退券→批次废弃连带作废，测试数据已清理。**边界**：券抵扣后应付=0 暂不支持（返回 400 并退券）。**待前端接入**：首页 banner 领券、结算页选券（`pay_amount` 是新的支付金额口径） |
