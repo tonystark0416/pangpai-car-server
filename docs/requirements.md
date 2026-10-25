@@ -23,59 +23,97 @@
 | 支付 | 微信支付 V2（JSAPI 统一下单 / 查单 / 退款，MD5 签名 + XML + p12 证书） |
 | 定时任务 | node-schedule（独立进程） |
 | 文件上传 | multer（单文件 `file`，上限 10MB） |
+| 后台鉴权 | JWT（jsonwebtoken，`src/utils/jwt.js`，中间件 `adminAuth`） |
+| Excel 导出 | exceljs（v1.6.13 起，后台订单导出为 `.xlsx`） |
+| 管理后台前端 | Vue 3 + Vite + Element Plus + Pinia（`admin-web/`，产物由 Express 托管至 `/admin`） |
 | 其他 | axios、xml2js、md5、date-fns、dayjs、moment |
 
-### 1.2 目录结构（v1.2.0 重排，标准 Express 分层）
+### 1.2 目录结构（**v1.7.3 重排**，标准 Express 分层 + 管理后台）
 
 ```
 pangpai-car/
-├── app.js                    # Express 入口，监听 3002 端口
-├── .env                      # 环境变量（敏感，不入库）
-├── .env.example              # 环境变量模板（入库）
-├── package.json              # scripts: start / dev / task:token
-├── pangpaicar_start.sh       # 服务器 PM2 启动脚本
-├── docs/requirements.md      # 本需求文档
-├── https/                    # SSL 证书（不入库）
-├── uploads/                  # 上传文件目录（不入库）
+├── app.js                       # Express 入口，监听 3002；托管 admin-web/dist 至 /admin
+├── .env / .env.example          # 环境变量（敏感，不入库）/ 模板（入库）
+├── package.json                 # scripts: start / dev / task:token
+├── ecosystem.config.cjs         # PM2 配置（主服务 pangpaicar + token 任务 pangpai-token）
+├── pangpaicar_start.sh          # 服务器启动脚本
+├── docs/
+│   ├── requirements.md          # 本需求文档（唯一需求与迭代追踪文档）
+│   └── api-for-miniprogram.md   # 交付小程序前端的接口文档（含 Change Log）
+├── scripts/                     # 一次性迁移脚本（均幂等，执行后保留备查）
+│   ├── local-dev-init.sql                     # 本地一键建表 + 种子数据
+│   ├── migrate_user_to_pp.js                  # v1.6.15 adp_user → pp_user
+│   ├── migrate_user_phone_unique.js           # v1.7.0 手机号唯一索引 + 孤儿授权清理
+│   ├── migrate_car_fee_fields.js              # v1.6.18 车辆整备费/保险费字段
+│   ├── migrate_order_clean_price_position.js  # v1.6.19 订单字段顺序调整
+│   └── migrate_coupon.js                      # v1.7.3 优惠券两张表 + 订单 4 列
+├── https/                       # SSL 证书（不入库）
+├── uploads/                     # 上传目录（不入库）
+├── logs/                        # PM2 日志（不入库）
+├── admin-web/                   # 管理后台前端（Vue 3 + Vite + Element Plus）
+│   ├── vite.config.js           # dev 代理 /admin-api、/images 至 3002
+│   ├── dist/                    # 构建产物，由 Express 托管到 /admin 路径
+│   └── src/
+│       ├── api/index.js         # axios 实例（自动带 admin_token）
+│       ├── router/index.js      # 路由 + 登录守卫
+│       ├── layout/AdminLayout.vue  # 侧边栏（概览/订单/车辆/优惠券/用户）
+│       ├── utils/format.js      # formatDateTime（东八区）
+│       ├── constants.js
+│       └── views/               # Login / Dashboard / Orders / Cars / Coupons / Users
 └── src/
-    ├── config/index.js       # 统一配置中心（读 .env）
-    ├── routes/               # 路由层（薄层，只做挂载）
-    │   ├── index.js          # 路由汇总
-    │   ├── user.routes.js    # 登录/驾驶证
-    │   ├── car.routes.js     # 车辆
-    │   ├── checkout.routes.js# 结算计价
-    │   ├── order.routes.js   # 订单
-    │   ├── payment.routes.js # 支付
-    │   ├── wechat.routes.js  # 小程序码/企微回调
-    │   └── upload.routes.js  # 文件上传
-    ├── controllers/          # 业务控制器（Express req/res）
-    │   ├── user.controller.js
+    ├── config/index.js          # 统一配置中心（读 .env）
+    ├── routes/                  # 路由层（薄层，只做挂载）
+    │   ├── index.js             # C 端路由汇总
+    │   ├── user.routes.js       # 登录 / 注册 / 手机号 / 驾驶证
+    │   ├── car.routes.js        # 车辆
+    │   ├── checkout.routes.js   # 结算计价
+    │   ├── order.routes.js      # 订单（含自助退款）
+    │   ├── payment.routes.js    # 支付下单 / 回调 / 查单
+    │   ├── coupon.routes.js     # v1.7.3 优惠券（C 端领券）
+    │   ├── wechat.routes.js     # 小程序码 / 企微回调
+    │   ├── upload.routes.js     # 文件上传
+    │   └── admin/index.js       # /admin-api 汇总（JWT 校验在此）
+    ├── controllers/             # 业务控制器（Express req/res）
+    │   ├── user.controller.js   # tryLogin / loginByPhone / bindPhone / 驾驶证
     │   ├── car.controller.js
     │   ├── checkout.controller.js
     │   ├── order.controller.js
     │   ├── payment.controller.js
-    │   ├── wechat.controller.js  # 小程序码 + 企微回调（合并原两处）
-    │   └── upload.controller.js
-    ├── models/               # 数据访问层
-    │   ├── user.model.js     # adp_user / pp_driver
-    │   ├── car.model.js      # pp_car
-    │   └── order.model.js    # pp_order
-    ├── services/             # 第三方服务封装
+    │   ├── coupon.controller.js # v1.7.3 可领券列表 / 领券 / 我的券包
+    │   ├── wechat.controller.js # 小程序码 + 企微回调
+    │   ├── upload.controller.js
+    │   └── admin/               # 后台：auth / car / order / user / coupon(v1.7.3)
+    ├── models/                  # 数据访问层（纯 SQL）
+    │   ├── user.model.js        # pp_user / pp_user_auth / pp_driver
+    │   ├── car.model.js         # pp_car
+    │   ├── order.model.js       # pp_order
+    │   ├── coupon.model.js      # v1.7.3 pp_coupon / pp_user_coupon
+    │   └── admin.model.js       # 后台列表 / 统计 / 导出
+    ├── services/                # 第三方服务与领域服务
+    │   ├── pricing.service.js   # 计价唯一真源（含 v1.7.3 券抵扣）
+    │   ├── refund.service.js    # 退款编排（按 pay_amount + 退款后退券）
+    │   ├── coupon.service.js    # v1.7.3 券可用性判定与抵扣计算
     │   └── wechat/
-    │       ├── miniprogram.js  # token/jscode2session/OCR/小程序码（合并原两处）
-    │       ├── work.js         # 企业微信
-    │       └── pay.js          # 微信支付 V2
+    │       ├── miniprogram.js   # token / jscode2session / getPhoneNumber / OCR / 小程序码
+    │       ├── work.js          # 企业微信通知
+    │       └── pay.js           # 微信支付 V2（下单 / 查单 / 退款）
     ├── middlewares/
-    │   ├── asyncHandler.js   # async 路由异常包装器
-    │   └── upload.js         # multer 上传实例
+    │   ├── asyncHandler.js      # async 路由异常包装器
+    │   ├── adminAuth.js         # 后台 JWT 校验
+    │   └── upload.js            # multer 上传实例
     ├── utils/
-    │   └── mysql.js          # MySQL 连接封装（含错误容错）
-    ├── tasks/                # 独立运行脚本
-    │   └── refreshAccessToken.js  # 定时刷新小程序/企微 access_token
-    └── data/                 # 支付证书、access_token 缓存（不入库，原 file/）
+    │   ├── mysql.js             # MySQL 连接封装（含错误容错）
+    │   └── jwt.js               # 后台 token 签发 / 校验
+    ├── tasks/
+    │   └── refreshAccessToken.js # 定时刷新小程序 / 企微 access_token
+    └── data/                    # 支付证书、access_token 缓存（不入库）
 ```
 
-**分层约定**：`routes`（路径 → 控制器）→ `controllers`（参数校验 + 编排）→ `models`（SQL）/ `services`（第三方 API），横切能力放 `middlewares`，纯工具放 `utils`。新增业务按此目录落位即可。
+**分层约定**：`routes`（路径 → 控制器）→ `controllers`（参数校验 + 编排）→ `models`（纯 SQL）/ `services`（第三方 API 与领域逻辑），横切能力放 `middlewares`，纯工具放 `utils`。新增业务按此目录落位即可。
+
+**新增业务的标准落位（以 v1.7.3 优惠券为例）**：`scripts/migrate_*.js`（建表，幂等）→ `src/models/<模块>.model.js`（SQL）→ `src/services/<模块>.service.js`（规则判定/计算）→ `src/controllers/<模块>.controller.js` + `admin/<模块>.controller.js`（C 端/后台两套）→ `src/routes/<模块>.routes.js` + `admin/index.js`（挂载）→ `admin-web/src/views/<模块>.vue` + `router/index.js` + `AdminLayout.vue`（后台页面）。
+
+**计价相关改动必须收敛到 `services/pricing.service.js`**（`/checkout`、`/createOrder`、后台改价均以此为唯一真源），避免多处算价不一致。
 
 ### 1.3 配置管理（v1.1.0）
 
