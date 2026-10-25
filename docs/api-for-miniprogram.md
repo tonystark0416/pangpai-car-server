@@ -184,7 +184,7 @@ async onGetPhone(e) {
 | 项 | 内容 |
 |---|---|
 | 方法 / 路径 | `GET /checkout` |
-| 参数 | `uid`（必填）、`carId`（必填）、`pickUpTime`（毫秒时间戳）、`returnTime`（毫秒时间戳）、`pickUpAddress`、`returnAddress`、`contact_phone`、`driver_price`（司机单价/天）、**`insuranceLevel`（v1.6.18 新增）** |
+| 参数 | `uid`（必填）、`carId`（必填）、`pickUpTime`（毫秒时间戳）、`returnTime`（毫秒时间戳）、`pickUpAddress`、`returnAddress`、`contact_phone`（**订单联系电话，由用户在结算页手填，见下方说明**）、`driver_price`（司机单价/天）、**`insuranceLevel`（v1.6.18 新增）** |
 | 成功 | 裸对象（无 code 包裹）：`{uid, contact_phone, data:{车辆对象}, rent_day_price, rentDay, rent_total_price, clean_price, server_day_price, server_total_price, door_pickup_price, door_return_price, driver_price, driver_total_price, total_price, insurance_level, pickUpAddress, returnAddress, pickUpTime, returnTime}` |
 | 失败 | `{code:-1, msg:'参数缺失'}` / `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` / `400 {"code":400,"msg":"车辆不存在，无法结算"}` / `400 {"code":400,"msg":"车辆整备费配置异常，请联系客服"}` |
 | 备注 | **本接口的返回对象可直接作为 `/createOrder` 的 `checkOutArray` 传入**（字段名已对齐） |
@@ -193,6 +193,7 @@ async onGetPhone(e) {
 | **v1.6.18 保险费兼容说明** | 旧参数 `insurancePrice`（传金额）不再作为金额使用：为兼容老版本，**金额 ≥100 视为 `l2`，否则视为 `l1`**，实际计费仍按车辆配置。**建议前端尽快改为传 `insuranceLevel`** |
 | **v1.6.12 计算口径** | **租用天数 = 时长 ÷ 24 小时向上取整，且至少 1 天**（例：相差 25 小时算 **2 天**，相差 23 小时算 **1 天**，`rentDay` 现为整数） |
 | **金额来源** | 金额由服务端按车辆实时价重算，与前端传参无关；`driver_price` 仅作为选项输入并校验白名单（`0/400`，与 `/getDriverPrice` 输出一致）；保险金额不再由前端决定 |
+| **`contact_phone` 口径（v1.7.1 明确）** | 订单联系电话 = **用户在结算页手工填写的号码**，用于门店/客服联系本次用车人。**前端不要用账号手机号（`pp_user.phone`）自动回填，服务端也不会做默认值兜底**——账号手机号是登录凭证，可能与本次实际用车人不同（代人订车、公司用车等）。该字段会原样落入 `pp_order.contact_phone` |
 
 ### 3.2 保险价格档位
 
@@ -240,6 +241,7 @@ async onGetPhone(e) {
 | 前端判断 | **先判断 `res.code === 400` → 提示 `res.msg` 并返回列表刷新；否则取 `res.result.order_sn` 继续支付** |
 | **v1.6.12 金额以服务端为准** | 天数、日租金、各项金额、总价**全部由服务端重算**，忽略 `checkOutArray` 里传来的 `rentDay` / `rent_total_price` / `total_price` 等。以订单详情 `/getOrderDetail` 或 `result` 返回的实际金额为准进行支付，**勿用本地计算值**（两者不一致时会支付失败） |
 | **v1.6.18 保险档位以服务端为准** | 服务端按 checkOutArray 里的 `insurance_level`（`l1`/`l2`，缺省 l1）+ **该车的保险配置**重算保险费；前端传的 `server_day_price` / `server_total_price` 一律忽略。**请把 `/checkout` 返回的 `insurance_level` 原样带回**（即整包传 checkOutArray 即可，不要自行构造） |
+| **`contact_phone`（v1.7.1 明确）** | **订单联系电话保持用户手填，服务端不做任何默认值填充**（不会用 `pp_user.phone` 兜底）。请前端在结算页让用户填写并原样带回；目前服务端不校验格式，**请确保传的是 11 位手机号，不要传空值或 `"undefined"` 字符串**（历史上 45 笔订单里有 35 笔是该问题，后台导出会看到空号码） |
 
 ### 4.2 订单列表
 
