@@ -14,14 +14,16 @@ const couponModel = require('../models/coupon.model');
  * @param {number|string} p.uid 下单用户（防止用他人券码）
  * @param {string} [p.couponSn] 券码，不传表示不用券
  * @param {number|string} p.carId 用于校验适用范围
+ * @param {number} [p.orderAmount] 本次订单原价（元）。给定时要求 **orderAmount > 券面额**，
+ *        否则判定为不可用——避免产生 0 元订单
  * @returns {{ok:boolean, msg?:string, coupon?:{coupon_id,coupon_sn,amount}}}
  */
-async function resolveCouponForOrder({ uid, couponSn, carId }) {
+async function resolveCouponForOrder({ uid, couponSn, carId, orderAmount }) {
   if (!couponSn) {
-    return { ok: true, coupon: null };
+    return { ok: true, coupon: null }; // 不传券码 = 本次不使用优惠券（默认行为）
   }
   const row = await couponModel.getUserCouponBySn(couponSn, uid);
-  const check = couponModel.validateCoupon(row, { carId });
+  const check = couponModel.validateCoupon(row, { carId, orderAmount });
   if (!check.ok) {
     return { ok: false, msg: check.msg };
   }

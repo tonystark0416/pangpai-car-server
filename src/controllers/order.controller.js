@@ -20,16 +20,7 @@ async function createOrder(req, res) {
 
   const c = data.checkOutArray;
 
-  // v1.7.3：校验优惠券（与 /checkout 同一套口径），每单最多一张
-  const check = await couponService.resolveCouponForOrder({
-    uid: c.uid,
-    couponSn: c.coupon_sn,
-    carId: c.data && c.data.id,
-  });
-  if (!check.ok) {
-    return res.status(400).json({ code: 400, msg: check.msg });
-  }
-
+  // ① 先按「不用券」算原价：默认不使用优惠券，且需要原价来判断券的金额门槛
   let price;
   try {
     price = await pricing.calcOrderPrice({
@@ -39,13 +30,36 @@ async function createOrder(req, res) {
       insuranceLevel: c.insurance_level, // v1.6.18：保险档位（l1/l2），缺省低档
       insurancePrice: c.server_day_price, // 旧字段，仅用于推断档位
       driverPrice: c.driver_price,
-      coupon: check.coupon,
     });
   } catch (error) {
     if (pricing.isPriceError(error)) {
       return res.status(400).json({ code: 400, msg: error.message });
     }
     throw error;
+  }
+
+  // ② 传了券码才校验（与 /checkout 同一套口径，含「订单金额 > 券面额」门槛）
+  let check = { ok: true, coupon: null };
+  if (c.coupon_sn) {
+    check = await couponService.resolveCouponForOrder({
+      uid: c.uid,
+      couponSn: c.coupon_sn,
+      carId: c.data && c.data.id,
+      orderAmount: price.total_price,
+    });
+    if (!check.ok) {
+      return res.status(400).json({ code: 400, msg: check.msg });
+    }
+    // ③ 带券重算实付金额
+    price = await pricing.calcOrderPrice({
+      carId: c.data && c.data.id,
+      pickUpTime: c.pickUpTime,
+      returnTime: c.returnTime,
+      insuranceLevel: c.insurance_level,
+      insurancePrice: c.server_day_price,
+      driverPrice: c.driver_price,
+      coupon: check.coupon,
+    });
   }
 
   // v1.7.3：券抵扣后金额为 0 暂不支持（微信支付不接受 0 元下单），拦截并返还券

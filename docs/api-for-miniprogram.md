@@ -198,7 +198,9 @@ async onGetPhone(e) {
 | 成功 | 裸对象（无 code 包裹）：`{uid, contact_phone, data:{车辆对象}, rent_day_price, rentDay, rent_total_price, clean_price, server_day_price, server_total_price, door_pickup_price, door_return_price, driver_price, driver_total_price, total_price, coupon_id, coupon_sn, discount_price, pay_amount(**v1.7.3 优惠券字段**), insurance_level, pickUpAddress, returnAddress, pickUpTime, returnTime}` |
 | 失败 | `{code:-1, msg:'参数缺失'}` / `400 {"code":400,"msg":"还车时间必须晚于取车时间"}` / `400 {"code":400,"msg":"取车/还车时间不合法"}` / `400 {"code":400,"msg":"司机费用不合法，可选值：0 / 400"}` / `400 {"code":400,"msg":"车辆不存在，无法结算"}` / `400 {"code":400,"msg":"车辆整备费配置异常，请联系客服"}` / **券不可用时 `400 {"code":400,"msg":"优惠券已使用" 等（v1.7.3）}`** |
 | 备注 | **本接口的返回对象可直接作为 `/createOrder` 的 `checkOutArray` 传入**（字段名已对齐） |
-| **`couponSn` 参数（v1.7.3）** | 可选，用户在券包里选中的**券码**（`coupon_sn`）。服务端校验「归属本人 + 未使用 + 未作废 + 在有效期内 + 适用于该车辆」后计算优惠：**`discount_price = min(券面额, total_price)`、`pay_amount = total_price - discount_price`**。**`total_price` 仍是原价**，支付请用 `pay_amount`。**每单最多使用一张券** |
+| **`couponSn` 参数（v1.7.3）** | 可选，用户在券包里选中的**券码**（`coupon_sn`）。服务端校验「归属本人 + 未使用 + 未作废 + 在有效期内 + 适用于该车辆 + **订单金额大于券面额**」后计算优惠：**`discount_price = min(券面额, total_price)`、`pay_amount = total_price - discount_price`**。**`total_price` 仍是原价**，支付请用 `pay_amount`。**每单最多使用一张券** |
+| **默认不使用券（v1.7.3）** | **不传 `couponSn` = 不享受任何优惠**（默认口径）：`discount_price=0`、`pay_amount=total_price`。**必须由用户在结算页手动选择**，服务端不会自动替用户挑券（哪怕面额最大那张） |
+| **金额门槛（v1.7.3）** | **订单金额 ≤ 券面额时该券不可用**：券包里返回 `usable=false` 并给出原因；本接口与 `/createOrder` 均拒绝，返回 `400 {"msg":"订单金额需大于优惠券面额，该券本次不可用"}`。建议先用券包接口的 `amount` 参数过滤，别让用户选到用不了的券 |
 | **v1.6.18 计价公式** | **总费用 = 车辆日租金 × 天数 + 保险日单价 × 天数 + 司机日单价 × 天数 + 整备费**。ⓘ **整备费是「按订单一次性」收取，不乘天数**；其余三项都乘天数 |
 | **v1.6.18 保险费来源** | 保险金额改为**按车辆配置**（后台车辆管理里配），`insuranceLevel` 传 `l1`（低档）/ `l2`（高档），**缺省或不传 = 低档 l1**。已**取消“不买保险”**，用户必须二选一 |
 | **v1.6.18 保险费兼容说明** | 旧参数 `insurancePrice`（传金额）不再作为金额使用：为兼容老版本，**金额 ≥100 视为 `l2`，否则视为 `l1`**，实际计费仍按车辆配置。**建议前端尽快改为传 `insuranceLevel`** |
@@ -341,7 +343,11 @@ async onGetPhone(e) {
 
 **概念**：`coupon_id` = 券**批次号**（后台创建）；`coupon_sn` = 用户领到的**唯一券码**，结算与下单都用它。
 
-**流程**：首页 banner → `GET /getCouponList` 展示可领券 → 点击 `POST /receiveCoupon` 领券拿到 `coupon_sn` → 结算页 `GET /getUserCoupons?carId=` 选券 → `GET /checkout?...&couponSn=` 试算 → `POST /createOrder`（checkOutArray 里带上 `coupon_sn`）正式核销。
+**流程**：首页 banner → `GET /getCouponList` 展示可领券 → 点击 `POST /receiveCoupon` 领券拿到 `coupon_sn` → 结算页 `GET /getUserCoupons?carId=&amount=` 拉可用券（**由用户手动挑选，默认不选**）→ `GET /checkout?...&couponSn=` 试算 → `POST /createOrder`（checkOutArray 里带上 `coupon_sn`）正式核销。
+
+> **默认不使用优惠券**：后端只在请求里收到券码时才抵扣，**不会自动帮用户选券**（哪怕他有面额最大的一张）。用不用券完全由用户在结算页手动决定。
+>
+> **金额门槛**：**订单金额必须大于券面额**才可用。订单金额 ≤ 券面额时该券不可选（券包里 `usable=false` 并给出原因），`/checkout` 与 `/createOrder` 也会拒绝：`400 {"msg":"订单金额需大于优惠券面额，该券本次不可用"}`。这条规则从源头避免产生 0 元支付。
 
 ### 4.5.1 可领取券列表
 
@@ -363,14 +369,15 @@ async onGetPhone(e) {
 | 失败 | `400 {"code":400,"msg":"优惠券不存在或不在活动时间内"}` / `{"msg":"优惠券已被领完"}` / `{"msg":"已达每人限领张数"}` / `{"msg":"领取失败，请稍后重试"}` |
 | 说明 | 库存**原子扣减** + 限领双重校验（含唯一键兜底），并发不会超发；领到手的券绑定当前用户，换设备也能在「我的券包」看到 |
 
-### 4.5.3 我的券包
+### 4.5.3 我的券包 / **结算页可用券列表**
 
 | 项 | 内容 |
 |---|---|
 | 方法 / 路径 | `GET /getUserCoupons` |
-| 参数 | `uid`（必填）、`carId`（可选，只返回**该车辆可用**的券，结算页用它过滤）、`status`（可选：0未使用/1已使用/2已作废） |
-| 成功 | `{code:200, result:[{coupon_sn, coupon_id, name, amount, scope_type, use_start_time, use_end_time, status, status_text, usable}], total}` |
-| 说明 | `usable` 已综合考虑状态与有效期，前端直接据此置灰不可选的券 |
+| 参数 | `uid`（必填）、`carId`（可选，只返回**该车辆可用**的券）、`status`（可选：0未使用/1已使用/2已作废）、**`amount`（结算页必传：本次订单原价，取不带券调一次 `/checkout` 的 `total_price`）** |
+| 成功 | `{code:200, result:[{coupon_sn, coupon_id, name, amount, scope_type, use_start_time, use_end_time, status, status_text, usable, unusable_reason}], total}` |
+| 说明 | `usable` **已综合**状态、有效期、适用范围与金额门槛，前端直接据此置灰；`unusable_reason` 可直接展示给用户（如「已过期」「不适用于当前车辆」「订单金额需大于优惠券面额，该券本次不可用」），可用时为空串 |
+| **不传 `amount` 时** | 只判断状态/有效期/适用范围（**券包浏览**场景）；**结算页必须传**，否则用户会看到「本单实际用不了」的券 |
 | 失败 | `{code:400, msg:'缺少参数：uid'}` |
 
 > **金额口径提醒**：`/checkout` 与 `/createOrder` 返回的 **`total_price` 是原价**，用券后请用 **`pay_amount`（实付）** 传给 `/getWxPay` 支付，否则服务端会拦截并提示「支付金额与订单金额不一致」。券抵扣后应付为 0 时暂不支持下单（返回 `400` 并自动退券）。
@@ -424,6 +431,8 @@ async onGetPhone(e) {
 | v1.6.12 | 2026-10-18 | `GET /checkout` | 租用天数改为**按 24 小时向上取整且至少 1 天**（`rentDay` 变整数）；时间倒挂/取还相同/时间非法/保险或司机金额不在白名单均返回 `400 + msg` | **需要**：① 若有依赖小数天数的展示请改为整数；② 新增的 400 错误按 `res.msg` 提示用户 |
 | v1.6.12 | 2026-10-18 | `POST /createOrder` | **金额改由服务端重算**，忽略前端传来的 `rentDay`/`rent_total_price`/`total_price`；新增时间与金额白名校验的 400 错误 | **需要**：支付前务必用 `result`（或 `/getOrderDetail`）返回的 `total_price` 下单支付，**不要**用本地计算值，否则支付回调金额核验会失败 |
 | v1.7.0 | 2026-10-25 | `GET /tryLogin` | **不再自动注册**：已有账号仍返回 `200 + result（含 id=uid）`；**尚无账号返回 `202`，不再创建账号** | **需要**：登录逻辑改为 if code===200 进首页、else if code===202 走注册（否则新用户永远拿不到 uid） |
+| v1.7.3 | 2026-10-25 | `GET /getUserCoupons` | **结算页可用券列表**：新增可选参数 **`amount`**（本次订单原价，取不带券调 `/checkout` 的 `total_price`）。传了即启用金额门槛，并新增返回字段 **`unusable_reason`**（不可选原因文案，可直接展示给用户） | **需要**：结算页必须传 `amount`，用 `usable`/`unusable_reason` 置灰并提示；券包浏览页可不传 |
+| v1.7.3 | 2026-10-25 | 优惠券使用策略 | **默认不使用任何券**（不传券码就不抵扣，服务端不会自动帮用户挑券），**必须由用户在结算页手动选择**；**订单金额 ≤ 券面额时该券不可用**（置灰，`/checkout`、`/createOrder` 均返回 `400 订单金额需大于优惠券面额`） | **需要**：结算页默认不选券、不要自动勾选最大面额券；选券 UI 需消费 `usable`/`unusable_reason` |
 | v1.7.3 | 2026-10-25 | `GET /checkout` / `POST /createOrder` | **支持使用优惠券**：新增可选参数 `couponSn`（券码），服务端校验后返回 `coupon_id`/`coupon_sn`/`discount_price`（优惠额）/**`pay_amount`（实付）**；**`total_price` 仍是原价**。券不可用时返回 400 具体原因（已使用/已过期/不适用该车辆等）。每单最多一张 | **需要**：① 结算页加选券入口；② **支付金额改用 `pay_amount`**（继续用 total_price 会被服务端拦截），实付金额展示也用它 |
 | v1.7.3 | 2026-10-25 | `GET /getCouponList`（新增）、`POST /receiveCoupon`（新增）、`GET /getUserCoupons`（新增） | 首页 banner 可领券列表 → 领券返回唯一券码 `coupon_sn` → 我的券包（`carId` 过滤该车可用券，结果含 `usable` 便于置灰） | **需要**：首页 banner 下方加领券入口，结算页加选券组件 |
 | v1.7.3 | 2026-10-25 | `GET /getWxPay` | **服务端开始校验金额**：传入的 `totalFee`（分）必须等于订单实付 `pay_amount`×100，不符直接返回 `success:false`。此前完全信任前端传值 | **需要**：用券订单必须传由 `pay_amount` 换算的金额（无券订单 `pay_amount` = `total_price`，不受影响） |

@@ -358,7 +358,7 @@ async function receiveCoupon(uid, couponId) {
  * @param {number} uid
  * @param {object} [opt] { carId, status, onlyAvailable }  carId 用于筛选当前车辆可用
  */
-async function getUserCoupons(uid, { carId, status } = {}) {
+async function getUserCoupons(uid, { carId, status, amount } = {}) {
   const db = new MySQL();
   try {
     const where = ['u.uid = ?'];
@@ -376,13 +376,9 @@ async function getUserCoupons(uid, { carId, status } = {}) {
        ORDER BY u.status ASC, u.use_end_time ASC, u.id DESC`,
       params
     );
-    // 使用时间窗口也要实时判断，这里顺带算好 usable 供前端直接置灰
+    // usable / unusable_reason 一并算好，前端可直接置灰并提示原因
     return rows.map((r) => {
-      const now = Date.now();
-      const usable =
-        Number(r.status) === USER_COUPON_STATUS.UNUSED &&
-        new Date(r.use_start_time).getTime() <= now &&
-        new Date(r.use_end_time).getTime() >= now;
+      const check = validateCoupon(r, { carId, orderAmount: amount });
       return {
         coupon_sn: r.coupon_sn,
         coupon_id: r.coupon_id,
@@ -394,7 +390,8 @@ async function getUserCoupons(uid, { carId, status } = {}) {
         status: Number(r.status),
         status_text: USER_COUPON_STATUS_TEXT[r.status],
         receive_time: r.receive_time,
-        usable,
+        usable: check.ok,
+        unusable_reason: check.ok ? '' : check.msg,
       };
     });
   } finally {
@@ -416,11 +413,20 @@ async function getUserCouponBySn(couponSn, uid) {
   }
 }
 
+/** 是否传了有效的订单金额（用于判断是否启用「金额门槛」校验） */
+function isAmountGiven(v) {
+  return v !== undefined && v !== null && v !== '' && !Number.isNaN(Number(v));
+}
+
 /**
  * 券可用性校验（结算/下单前）
+ * @param {object} couponRow pp_user_coupon 行
+ * @param {object} [opt]
+ * @param {number|string} [opt.carId] 当前结算车辆，用于校验适用范围
+ * @param {number|string} [opt.orderAmount] 本次订单原价（元），给定时要求 **orderAmount > 券面额** 才可用
  * @returns {{ok:boolean, msg?:string, coupon?:object}}
  */
-function validateCoupon(couponRow, { carId } = {}) {
+function validateCoupon(couponRow, { carId, orderAmount } = {}) {
   if (!couponRow) return { ok: false, msg: '优惠券不存在' };
   if (Number(couponRow.status) === USER_COUPON_STATUS.USED) return { ok: false, msg: '优惠券已使用' };
   if (Number(couponRow.status) === USER_COUPON_STATUS.INVALID) return { ok: false, msg: '优惠券已作废' };
@@ -436,6 +442,13 @@ function validateCoupon(couponRow, { carId } = {}) {
     const ids = String(couponRow.scope_car_ids || '').split(',').map((s) => Number(s.trim()));
     if (!carId || !ids.includes(Number(carId))) {
       return { ok: false, msg: '该优惠券不适用于当前车辆' };
+    }
+  }
+  // v1.7.3 补充规则：订单金额必须**大于**券面额才可用
+  //   订单金额 ≤ 券面额 → 券不可用（避免 0 元订单与「倒找钱」的歧义）
+  if (isAmountGiven(orderAmount)) {
+    if (Number(orderAmount) <= Number(couponRow.amount)) {
+      return { ok: false, msg: '订单金额需大于优惠券面额，该券本次不可用' };
     }
   }
   return { ok: true, coupon: couponRow };

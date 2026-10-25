@@ -34,17 +34,7 @@ async function checkout(req, res) {
     return res.json({ code: 400, msg: '车辆不存在，无法结算' });
   }
 
-  // v1.7.3：优惠券可用性校验（归属、状态、有效期、适用范围），每单最多一张
-  let usedCoupon = null;
-  if (couponSn) {
-    const check = await couponService.resolveCouponForOrder({ uid, couponSn, carId });
-    if (!check.ok) {
-      return res.json({ code: 400, msg: check.msg });
-    }
-    usedCoupon = check.coupon;
-  }
-
-  // v1.6.12：统一走计价服务——天数按 24h 向上取整且至少 1 天，金额由服务端计算
+  // ① 先按「不用券」算一遍原价。**默认不使用优惠券**，只有用户显式传券码才参与抵扣
   let price;
   try {
     price = await pricing.calcOrderPrice({
@@ -54,13 +44,35 @@ async function checkout(req, res) {
       insuranceLevel,
       insurancePrice,
       driverPrice: driver_price,
-      coupon: usedCoupon,
     });
   } catch (error) {
     if (pricing.isPriceError(error)) {
       return res.json({ code: 400, msg: error.message });
     }
     throw error;
+  }
+
+  // ② 传了券码才校验：归属、状态、有效期、适用范围，且**订单金额必须大于券面额**
+  if (couponSn) {
+    const check = await couponService.resolveCouponForOrder({
+      uid,
+      couponSn,
+      carId,
+      orderAmount: price.total_price,
+    });
+    if (!check.ok) {
+      return res.json({ code: 400, msg: check.msg });
+    }
+    // ③ 带券重算，产出 discount_price / pay_amount
+    price = await pricing.calcOrderPrice({
+      carId,
+      pickUpTime,
+      returnTime,
+      insuranceLevel,
+      insurancePrice,
+      driverPrice: driver_price,
+      coupon: check.coupon,
+    });
   }
 
   // 响应结构与前端旧约定保持一致（可直接作为 createOrder 的 checkOutArray）

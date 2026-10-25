@@ -47,16 +47,20 @@ async function receiveCoupon(req, res) {
 }
 
 /**
- * 我的券包
- * @method GET ?uid=&carId=&status=
- * carId 用于结算页只展示当前车辆可用的券；status 不传返回全部
+ * 我的券包 / **结算页可用券列表**
+ * @method GET ?uid=&carId=&status=&amount=
+ * carId：只返回该车辆可用的券
+ * amount：**本次结算的订单原价**（元，取不带券调一次的 `/checkout` 返回的 `total_price`）。
+ *   传了才会启用「订单金额必须大于券面额」的门槛校验，并把不可用的券标出原因；
+ *   不传则该门槛不参与判断（券包页浏览场景）
+ * @returns 每张券带 `usable`（是否可用）与 `unusable_reason`（不可选原因，可用时为空串）
  */
 async function getUserCoupons(req, res) {
-  const { uid, carId, status } = req.query;
+  const { uid, carId, status, amount } = req.query;
   if (!uid) {
     return res.json({ code: 400, msg: '缺少参数：uid' });
   }
-  const list = await coupon.getUserCoupons(uid, { carId, status });
+  const list = await coupon.getUserCoupons(uid, { carId, status, amount });
   res.json({ code: 200, result: list, total: list.length });
 }
 
