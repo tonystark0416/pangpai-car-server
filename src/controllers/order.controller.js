@@ -5,6 +5,7 @@ const order = require('../models/order.model');
 const couponModel = require('../models/coupon.model');
 const pricing = require('../services/pricing.service');
 const couponService = require('../services/coupon.service');
+const { validateContactPhone } = require('../utils/validate');
 
 /**
  * 创建订单接口
@@ -19,6 +20,14 @@ async function createOrder(req, res) {
   }
 
   const c = data.checkOutArray;
+
+  // ⓪ 联系人手机号：**提交订单必填**（v1.7.3 强校验）
+  //    此前无任何校验，前端未填时会把空值 / "undefined" 直接落库（历史 45 单中 35 单为空号）
+  const phoneCheck = validateContactPhone(c.contact_phone);
+  if (!phoneCheck.ok) {
+    return res.status(400).json({ code: 400, msg: phoneCheck.msg });
+  }
+  c.contact_phone = phoneCheck.phone; // 统一落库为规范化后的 11 位号码
 
   // ① 先按「不用券」算原价：默认不使用优惠券，且需要原价来判断券的金额门槛
   let price;

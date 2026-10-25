@@ -5,6 +5,7 @@
 const car = require('../models/car.model');
 const pricing = require('../services/pricing.service');
 const couponService = require('../services/coupon.service');
+const { validateContactPhone } = require('../utils/validate');
 
 /**
  * 结算计价
@@ -75,10 +76,14 @@ async function checkout(req, res) {
     });
   }
 
+  // v1.7.3：手机号在这里**不强拦**（用户可能刚进结算页还没填），只做规范化——
+  // 填了合法的就回传干净的 11 位号；没填或不合法则原样回传，由 /createOrder 最终拦截
+  const phoneCheck = validateContactPhone(contact_phone);
+
   // 响应结构与前端旧约定保持一致（可直接作为 createOrder 的 checkOutArray）
   res.json({
     uid: uid,
-    contact_phone: contact_phone,
+    contact_phone: phoneCheck.ok ? phoneCheck.phone : contact_phone,
     data: data,
     ...price,
     pickUpAddress,

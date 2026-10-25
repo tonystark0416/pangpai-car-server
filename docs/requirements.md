@@ -238,7 +238,7 @@ uid 已就绪
 | `/getInsurancePrice` | GET | 保险报价（**v1.6.18：传 `carId` 时按该车辆配置返回**，缺省系统默认 L1 100 / L2 200 元/天） |
 | `/getCarFee` | GET | **v1.6.18 新增**：一次返回车辆的 `clean_price`（整备费，一次性）+ `insurancePrice_l1/l2`（保险日单价） |
 | `/getDriverPrice` | GET | 司机服务报价（当前硬编码 400 元/天） |
-| `/createOrder` | POST | 创建订单，body 为 `{checkOutArray: {...结算结果}}`，缺参返回 400（**v1.6.12：金额取服务端重算结果，不采信前端传价**；**v1.7.1：`contact_phone` 为结算页手填值，服务端不做账号手机号兜底**；**v1.7.3：`checkOutArray.coupon_sn` 携带券码时校验并核销，落库 `discount_price`/`pay_amount`**） |
+| `/createOrder` | POST | 创建订单，body 为 `{checkOutArray: {...结算结果}}`，缺参返回 400（**v1.6.12：金额取服务端重算结果，不采信前端传价**；**v1.7.1：`contact_phone` 为结算页手填值，服务端不做账号手机号兜底**；**v1.7.3：`checkOutArray.coupon_sn` 携带券码时校验并核销，落库 `discount_price`/`pay_amount`；`contact_phone` **必填且必须为 11 位手机号，不合规则拒绝提交订单**） |
 | `/getOrderList` | GET | 按 uid 分页查询订单 |
 | `/getOrderDetail` | GET | 按 orderSn + uid 查订单详情（含车辆信息、格式化时间） |
 | `/getOrderList` | GET | 分页查订单列表：`uid` + `pageNumber`；**v1.6.17 新增可选筛选** `pay_status` / `order_status`（支持逗号分隔多值、非法值忽略，不传等同旧行为），响应新增可选字段 `total`/`page`/`pageSize` |
@@ -253,7 +253,15 @@ uid 已就绪
 - 上门取/送车费 = 0（预留）
 - `total_price` = 以上各项之和
 
-**订单联系电话 `contact_phone`（v1.7.1 明确口径）**：结算页由**用户手工填写**，原样落入 `pp_order.contact_phone`。**服务端不做任何默认值填充**（不会用 `pp_user.phone` 兜底），前端也不要拿账号手机号自动回填——账号手机号是登录凭证，与本次实际用车人可能不同（代人订车、公司用车）。目前后端不校验格式，前端需保证传 11 位手机号、不传空值或 `"undefined"`。
+**订单联系电话 `contact_phone`（v1.7.1 明确口径；**v1.7.3 起改为必填强校验**）**
+
+- **取值口径**：结算页由**用户手工填写**，作为本次实际用车人的联系电话。**服务端不做任何默认值填充**（不会用 `pp_user.phone` 兜底），前端也不要拿账号手机号自动回填——账号手机号是登录凭证，与本次用车人可能不同（代人订车、公司用车）。
+- **v1.7.3 起提交订单必填**：`/createOrder` 校验不通过直接 `400`，**不允许提交订单**。此前完全无校验，前端漏填时把空值 / `"undefined"` 直接落库（历史 45 单中 35 单为空号）。
+  - 未填 / 空串 / `"undefined"` / `"null"` → `400 {"msg":"请填写联系人手机号"}`
+  - 位数不对、号段非法 → `400 {"msg":"联系人手机号格式不正确，请填写 11 位手机号"}`
+  - 规则：规范化后必须匹配 `^1[3-9]\d{9}$`
+- **规范化**：入参先 `trim`、去掉空格与连字符、去掉 `+86` / `86` 前缀，落库统一为 11 位纯数字（如 `138 0013-8000` → `13800138000`）。
+- **`/checkout` 不强校验**：结算页刚打开时用户往往还没填，这一步只做规范化回传，**最终由 `/createOrder` 拦截**。校验规则集中在 `src/utils/validate.js`，两处共用。
 
 **订单号规则**：`PP + yyyyMMddHHmmss`（精确到秒，无随机位）。
 
@@ -500,6 +508,7 @@ total_price                                     // 保持原价不变，GMV/报�
 | v1.6.15 | 2026-10-24 | 用户体系拆分：庞派用户从共用表 `adp_user` / `adp_user_auth` / `adp_admin_user` 迁出到独立的 `pp_user` / `pp_user_auth` / `pp_admin_user`，adp_ 表保留给其他项目且**数据未做任何删除或修改**。迁移脚本 `scripts/migrate_user_to_pp.js`（先建库内备份表 + 导出离线 SQL，再 `CREATE TABLE ... LIKE` 建新表，按「有 pp 授权 ∪ 被 pp_order/pp_driver 引用」的口径迁移并**保留原主键 id**，幂等可重复执行补迁窗口期数据，最后校正 AUTO_INCREMENT）。代码侧替换 `user.model.js`（6 处 SQL）与 `admin.model.js`（11 处 SQL），`local-dev-init.sql` 同步改为建 pp_ 表 | 实测：备份表 63/62/1 行；迁入 pp_user 62 行、pp_user_auth 62 行、pp_admin_user 1 行；订单 7/45、驾驶证 1/2 关联成功（未关联的 uid 61/123 在**旧表本来就不存在**，属历史孤儿数据，非迁移丢失）；后台登录、用户列表、订单详情 join、小程序 openid 登录/新注册 全部正常 |
 | v1.6.16 | 2026-10-24 | 新增 C 端「取消订单」接口 `POST /cancelOrder`：仅用于**未支付**订单（不涉及资金），校验归属 uid + `pay_status=0` + `order_status=0`，通过后仅置 `order_status=4`（已取消）；`order.model.cancelUnpaidOrder` 的 UPDATE 条件自带状态断言，杜绝并发下误改已支付/已取车订单。与 `/cancelRefund` 按支付状态严格分流，避免「钱没退、单却取消了」 | 实测：未支付待取车 → 200 已取消且落库 order_status=4；重复取消 → 400 订单已取消；已支付订单 → 400 引导走 /cancelRefund；未支付已取车 → 400 提示联系客服；越权 403；不存在 404；缺参 400（测试订单已删除） |
 | v1.6.17 | 2026-10-25 | C 端 `GET /getOrderList` 支持状态筛选：新增可选入参 `pay_status` / `order_status`（支持逗号分隔多值，白名单外的值忽略），筛选在 **SQL 层**完成（全局筛选而非当前页过滤），不传参数行为与旧版完全一致；响应新增可选字段 `total` / `page` / `pageSize` 便于前端分页 | 实测：不传筛选 total=4 与旧版一致；`order_status=4` / `order_status=2,4` / `pay_status=1,2` 均命中 4 条；组合 `pay_status=2&order_status=4` 命中 3 条、`pay_status=1&order_status=4` 命中 1 条；非法值 `pay_status=99` 被忽略（total 仍为 4）；页码为 0 仍返回 201 |
+| v1.7.3 | 2026-10-26 | **订单联系电话 `contact_phone` 改为必填强校验**：提交订单前校验（未填/空/`"undefined"`/`"null"` → `400 请填写联系人手机号`；位数不对或号段非法 → `400 联系人手机号格式不正确…`），正则 `^1[3-9]\d{9}$`；入参先规范化（`trim`、去空格连字符、去 `+86`/`86` 前缀）后统一落库 11 位纯数字。校验规则抽到新增的 `src/utils/validate.js`，`/checkout` 只规范化不强拦（结算页刚打开时用户还没填），`/createOrder` 做最终拦截 | **背景**：此前完全无校验，前端漏填时把空值/`"undefined"` 直接落库，历史 45 单中 35 单为空号，门店无法联系用车人。实测 13 项全通（5 种合法写法均能下单且落库为 `13800138000`，8 种非法输入全部被拒） |
 | v1.7.3 | 2026-10-25 | **用券规则补充**（用户追加的两条）：① **订单金额 ≤ 券面额 → 该券不可用**（券包置灰 + `/checkout` 与 `/createOrder` 均拒绝并给出原因），使用时要求订单金额**严格大于**面额，从源头杜绝 0 元支付；② **默认不使用优惠券**，必须由用户在结算页**手动选择**（服务端不自动替用户选券、不推荐最大面额券）；③ `/getUserCoupons` 新增可选参数 `amount`（本次订单原价），据此计算 `usable` 并新增 `unusable_reason`（已使用/已作废/已过期/不适用于当前车辆/订单金额需大于优惠券面额）；④ 结算与下单改为「先按不用券算原价 → 校验券（含金额门槛）→ 带券重算实付」，两处口径一致 | 实测 7 项全通：默认不带券时优惠 0、实付=原价；传金额后超大面额券被置灰且结算/下单均被拒（券不会被白白核销）；小额券正常抵扣 648→598 并核销。测试数据已清理 |
 | v1.7.3 | 2026-10-25 | **新增优惠券功能**：① 新增 `pp_coupon`（批次：面额/库存/领取时间/使用时间/使用范围/每人限领限用/成本承担方预留/状态）与 `pp_user_coupon`（用户券：`coupon_sn` 唯一券码 + 面额范围有效期**快照**）；② `pp_order` 新增 `coupon_id`/`coupon_sn`/`discount_price`/`pay_amount` 四列，历史 45 单 `pay_amount` 已回填为 `total_price`；③ 后台接口 `GET/POST /admin-api/coupons`、`GET/PUT /admin-api/coupons/:id`、`PUT :id/status`（未开始→活动中→已废弃，废弃不可逆且**连带作废用户已领未用券**；活动中只允许追加库存）；④ C 端 `GET /getCouponList`、`POST /receiveCoupon`、`GET /getUserCoupons`；⑤ `/checkout` 与 `/createOrder` 支持 `couponSn`（每单一张），校验归属/状态/有效期/适用范围后**原子核销**，建单失败自动退券；⑥ **资金链路校准**：`/getWxPay` 服务端校验金额等于订单 `pay_amount`×100（此前完全信任前端）、支付回调核验与微信退款 `total_fee` 均改用 `pay_amount`（**不改则券订单退款必然失败**）；⑦ 退款成功后券退回账户（券已过期则不退回）；⑧ 导出 Excel 增加「优惠券金额/实付金额/优惠券码」三列，订单详情返回 `coupon_name`/`coupon_amount`，概览新增实收与优惠统计；⑨ admin-web 新增「优惠券管理」页；⑩ 迁移脚本 `scripts/migrate_coupon.js`（幂等，含 `SET NAMES utf8mb4` 防注释乱码） | 金额口径：**`total_price` 保持原价不变**，新增 `discount_price`（抵扣）与 `pay_amount`（实付），GMV/报表口径不受影响。实测 12 步全通：建批次→可领列表→领券拿券码→重复领被拒→库存 10→9→券包→结算（原价648-优惠50=实付598）→下单核销→重复使用被拒→退款退券→批次废弃连带作废，测试数据已清理。**边界**：券抵扣后应付=0 暂不支持（返回 400 并退券）。**待前端接入**：首页 banner 领券、结算页选券（`pay_amount` 是新的支付金额口径） |
 | v1.7.2 | 2026-10-25 | **登录/注册语义修正**：`GET /tryLogin` 的 `202` 原字段 `needPhone:true` 名不副实——它表达的是「**该微信尚未注册账号**」，手机号只是注册手段而非目的。现改为 `{code:202, msg:'该微信尚未注册账号，请先注册', needRegister:true, registerBy:'phone'}`，其中 `needRegister` 为主语义（有没有账号）、`registerBy` 说明注册方式（当前固定 `phone`，未来加验证码等方式只扩展该字段、202 语义不变），`needPhone` 保留为等价兼容字段。文档侧把流程拆清为「登录 = `/tryLogin`（查有没有账号）／注册 = `/loginByPhone`（建号并绑定）」 | 接口路径与 200/202 状态码不变，仅响应字段与文案调整，前端已按 `needPhone` 接入的不受影响；建议前端文案改为「请先注册 / 还没有账号」而非「请填写手机号」 |
