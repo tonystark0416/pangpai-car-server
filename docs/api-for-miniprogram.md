@@ -33,18 +33,23 @@
                               ↓
                     GET /tryLogin?openid=&unionid=  ← 只查不注册
                               ↓
-              ┌───────────────┴───────────────┐
-     code=200（已绑定）                 code=202 needPhone:true（未绑定）
-              ↓                                 ↓
-   【老用户】直接用 result.id=uid      【新用户】前端弹手机号授权按钮
-     进首页（无需任何改动）            <button open-type="getPhoneNumber">
-                                                ↓ e.detail.code
-                                      GET /loginByPhone?code=&openid=&unionid=
-                                                ↓
-                                      手机号换号 → 注册 → 绑定 openid
-                                                ↓
-                                      code=200，result.id=uid → 存 uid 进首页
+              ┌───────────────────────┴───────────────────────┐
+     code=200（该微信已有账号）              code=202 needRegister:true（**尚无账号**）
+              ↓                                               ↓
+   【老用户】= 登录成功                        【新用户】= 需要注册
+   直接用 result.id=uid 进首页                注册方式 = registerBy:'phone'
+   （行为与 v1.6.x 一致，无需改动）          <button open-type="getPhoneNumber">
+                                                              ↓ e.detail.code
+                                                  GET /loginByPhone?code=&openid=&unionid=
+                                                              ↓
+                                                  手机号换号 → 建号 → 绑定 openid
+                                                              ↓
+                                                  code=200，result.id=uid → 存 uid 进首页
 ```
+
+> **202 的准确含义**：`needRegister:true` = **「这个微信在本小程序还没有账号」** —— 是**未注册**状态，不是「缺手机号」。手机号只是当前唯一的注册手段（`registerBy:'phone'`），语义上应与"登录"区分开：
+> - `/tryLogin` = **登录**（查有没有账号）：有 → 200 登录成功；没有 → 202 未注册
+> - `/loginByPhone` = **注册/登录合一**（拿手机号建号或直接登录已有号）：返回 200 即拿到 uid
 
 **A. 新用户（首次登录 / openid 未绑定）接口顺序**
 
@@ -52,7 +57,7 @@
 |---|---|---|
 | 1 | `wx.login()`（前端 API） | `code` |
 | 2 | `GET /getOpenid?code=` | `result.openid`（建议一并把 `unionid` 留着） |
-| 3 | `GET /tryLogin?openid=&unionid=` | `202 {"needPhone":true}` → 转第 4 步 |
+| 3 | `GET /tryLogin?openid=&unionid=` | `202 {"needRegister":true}` = **该微信尚无账号（未注册）** → 转第 4 步走注册 |
 | 4 | 前端 `<button open-type="getPhoneNumber">` | `e.detail.code`（一次性，勿缓存） |
 | 5 | `GET /loginByPhone?code=&openid=&unionid=` | `200`，`result.id` = uid |
 | 6 | 存 uid → 首页 | — |
@@ -76,7 +81,9 @@
      → 需要取消时：未支付 /cancelOrder，已支付未取车 /cancelRefund
 ```
 
-> ⚠️ 判断新老用户**只看 `/tryLogin` 的 code**：`200` = 已注册直接进；`202` = 未注册走手机号授权。不要再用"是否返回 uid"以外的方式判断，也不要自己调接口创建用户。
+> ⚠️ 判断用户状态**只看 `/tryLogin` 的 code**：`200` = 已有账号（登录成功）；`202` = **尚无账号（未注册）**，需走注册。不要用"是否返回 uid"以外的方式判断，也不要自己调接口创建用户。
+>
+> **`202` 不是「需要手机号」**：它表达的是「未注册」。手机号只是当前唯一注册手段（响应里 `registerBy:'phone'`），前端文案建议写「请先注册 / 还没有账号」而不是「请填写手机号」。
 
 ### 1.1 换取 openid
 
@@ -97,8 +104,10 @@
 | 方法 / 路径 | `GET /tryLogin` |
 | 参数 | `openid`（必填）、`unionid`（可选，建议传，用于跨小程序识别同一用户） |
 | 成功 | `{code:200, msg:'自动登陆成功', result:{id, phone, nickname, username, ...}}` ← **result.id 即 uid，后续接口都用它** |
-| **未注册** | **`{code:202, msg:'未注册，请先授权手机号', needPhone:true}`** ← **v1.7.0 新增，前端必须处理：引导用户走手机号授权（1.3）** |
+| **未注册（无账号）** | **`{code:202, msg:'该微信尚未注册账号，请先注册', needRegister:true, registerBy:'phone', needPhone:true}`** ← **v1.7.2 语义修正**：202 表示「**该微信在本小程序还没有账号**」，不是「缺手机号」。`needRegister` 为主语义字段，`registerBy:'phone'` 说明当前注册方式，`needPhone` 为 v1.7.0 遗留的等价兼容字段。**前端必须处理：引导用户注册（1.3）** |
 | 失败 | `{code:201, msg:'登陆失败'}`（缺 openid 参数） |
+
+> 三个字段的关系：`needRegister`（有没有账号）→ 决定要不要注册；`registerBy`（用什么方式注册）→ 当前固定 `phone`；`needPhone` = `needRegister` 的旧名，后续可弃用。
 
 > ⚠️ **变更**：v1.7.0 起未绑定的 openid **不再自动创建账号**，返回 `202` 而不是直接给 uid。老用户（此前已 openid 绑定过）不受影响，仍返回 `200`。
 
@@ -374,7 +383,8 @@ async onGetPhone(e) {
 | v1.6.11 | 2026-10-17 | `GET /getWxPay` | 更正说明：`totalFee` 单位是**分**（此前文档误写为元；代码与支付回调金额核验口径一直是「分」） | 否（若此前按「元」传参请改为「分」） |
 | v1.6.12 | 2026-10-18 | `GET /checkout` | 租用天数改为**按 24 小时向上取整且至少 1 天**（`rentDay` 变整数）；时间倒挂/取还相同/时间非法/保险或司机金额不在白名单均返回 `400 + msg` | **需要**：① 若有依赖小数天数的展示请改为整数；② 新增的 400 错误按 `res.msg` 提示用户 |
 | v1.6.12 | 2026-10-18 | `POST /createOrder` | **金额改由服务端重算**，忽略前端传来的 `rentDay`/`rent_total_price`/`total_price`；新增时间与金额白名校验的 400 错误 | **需要**：支付前务必用 `result`（或 `/getOrderDetail`）返回的 `total_price` 下单支付，**不要**用本地计算值，否则支付回调金额核验会失败 |
-| v1.7.0 | 2026-10-25 | `GET /tryLogin` | **不再自动注册**：已绑定 openid 仍返回 `200 + result（含 id=uid）`；**未绑定返回 `202 + needPhone:true`，不再创建账号** | **需要**：登录逻辑改为 if code===200 进首页、else if code===202 展示手机号授权按钮走 `/loginByPhone`（否则新用户永远拿不到 uid） |
+| v1.7.0 | 2026-10-25 | `GET /tryLogin` | **不再自动注册**：已有账号仍返回 `200 + result（含 id=uid）`；**尚无账号返回 `202`，不再创建账号** | **需要**：登录逻辑改为 if code===200 进首页、else if code===202 走注册（否则新用户永远拿不到 uid） |
+| v1.7.2 | 2026-10-25 | `GET /tryLogin` | **202 响应字段语义修正**：由 `needPhone:true` 改为 `needRegister:true`（= 该微信**尚未注册账号**）+ `registerBy:'phone'`（注册方式）；`needPhone` 保留为等价兼容字段；msg 改为「该微信尚未注册账号，请先注册」 | **否（兼容）**：旧判断 `needPhone` 仍有效；但**建议**改用 `needRegister`，并把按钮文案从「请填写手机号」改为「注册 / 还没有账号」，否则用户会以为是补手机号 |
 | v1.7.0 | 2026-10-25 | `GET /loginByPhone`（**新接口，注册主入口**） | 传 `code`（`getPhoneNumber` 回调）+ `openid`(+`unionid`)，服务端换手机号后按手机号注册/登录并绑定 openid，返回 `200 + result（含 id=uid）` | **需要**：登录页加 `<button open-type="getPhoneNumber">`，把 `e.detail.code` 传给本接口；code 一次性，勿缓存 |
 | v1.7.0 | 2026-10-25 | `GET /bindPhone`（**新接口**） | 已登录用户补填手机号（`uid` + `code`），老用户（无手机号）可选接入 | 否（可选；若想补齐老用户手机号则接入） |
 | v1.6.17 | 2026-10-25 | `GET /getOrderList` | **新增可选筛选参数** `pay_status`、`order_status`（支持逗号分隔多值，非法值忽略，不传则行为不变）；响应**新增可选字段** `total` / `page` / `pageSize`（`result` 仍是订单数组） | **否（向后兼容）**：老版本不传参、只取 `result` 完全不受影响；若要加订单状态 Tab，则按建议传参即可 |
