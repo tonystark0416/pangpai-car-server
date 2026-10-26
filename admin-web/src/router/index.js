@@ -14,6 +14,11 @@ const router = createRouter({
         { path: 'orders', component: () => import('../views/Orders.vue'), meta: { title: '订单管理' } },
         { path: 'cars', component: () => import('../views/Cars.vue'), meta: { title: '车辆管理' } },
         { path: 'coupons', component: () => import('../views/Coupons.vue'), meta: { title: '优惠券管理' } },
+        {
+          path: 'coupons/:id/records',
+          component: () => import('../views/CouponRecords.vue'),
+          meta: { title: '领券记录' },
+        },
         { path: 'users', component: () => import('../views/Users.vue'), meta: { title: '用户管理' } },
       ],
     },

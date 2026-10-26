@@ -40,6 +40,8 @@ router.post('/coupons', asyncHandler(coupon.create));
 router.get('/coupons/:id', asyncHandler(coupon.detail));
 router.put('/coupons/:id', asyncHandler(coupon.update));
 router.put('/coupons/:id/status', asyncHandler(coupon.updateStatus));
+// 用户领券记录（v1.7.3）
+router.get('/coupons/:id/records', asyncHandler(coupon.records));
 
 // 订单管理
 router.get('/orders', asyncHandler(order.list));

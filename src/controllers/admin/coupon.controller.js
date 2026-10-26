@@ -76,6 +76,48 @@ async function detail(req, res) {
   res.json({ code: 0, data: row });
 }
 
+/**
+ * 用户领券记录（v1.7.3，优惠券管理的二级页面）
+ * 支持按状态与关键词（手机号/昵称/账号名/券码）筛选，并给出领取/使用分布
+ */
+async function records(req, res) {
+  const { page = 1, pageSize = 10, status, keyword } = req.query;
+  // 注意：req.params.id 是 pp_coupon 的**数字主键**，而 pp_user_coupon.coupon_id 存的是**批次号字符串**，
+  // 两者不是同一个东西，必须先用主键查到批次再取其 coupon_id 去关联。
+  const couponRow = await coupon.getCouponById(req.params.id);
+  if (!couponRow) {
+    return res.json({ code: 404, msg: '优惠券批次不存在' });
+  }
+  const data = await coupon.getUserCouponRecords({
+    couponId: couponRow.coupon_id,
+    page,
+    pageSize,
+    status,
+    keyword,
+  });
+  res.json({
+    code: 0,
+    data: {
+      coupon: {
+        coupon_id: couponRow.coupon_id,
+        name: couponRow.name,
+        amount: Number(couponRow.amount),
+        receive_start_time: couponRow.receive_start_time,
+        receive_end_time: couponRow.receive_end_time,
+        use_start_time: couponRow.use_start_time,
+        use_end_time: couponRow.use_end_time,
+        total_stock: Number(couponRow.total_stock),
+        remain_stock: Number(couponRow.remain_stock),
+        status: Number(couponRow.status),
+        status_text: coupon.COUPON_STATUS_TEXT[couponRow.status],
+      },
+      list: data.list,
+      total: data.total,
+      summary: data.summary,
+    },
+  });
+}
+
 /** 创建批次 */
 async function create(req, res) {
   const p = req.body || {};
@@ -111,4 +153,4 @@ async function updateStatus(req, res) {
   res.json({ code: 0, data: { id: Number(req.params.id), status: Number(req.body.status) } });
 }
 
-module.exports = { list, detail, create, update, updateStatus };
+module.exports = { list, detail, create, update, updateStatus, records };

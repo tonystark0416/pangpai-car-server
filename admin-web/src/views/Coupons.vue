@@ -49,9 +49,10 @@
             <el-tag :type="statusType(row.status)">{{ row.status_text }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openForm(row)">编辑</el-button>
+            <el-button link type="primary" @click="openRecords(row)">领券记录</el-button>
             <el-button v-if="row.status === 0" link type="success" @click="changeStatus(row, 1)">开始活动</el-button>
             <el-button v-if="row.status === 1" link type="danger" @click="changeStatus(row, 2)">废弃</el-button>
           </template>
@@ -117,6 +118,9 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '../api';
+import { useRouter } from 'vue-router';
+
+const router = useRouter();
 
 const loading = ref(false);
 const saving = ref(false);
@@ -148,6 +152,11 @@ function blankForm() {
 
 /** 活动中的券只允许追加库存，表单其余项禁用 */
 const isActive = computed(() => Number(form.status) === 1);
+
+/** 跳转到该批次的领券记录（用 pp_coupon 的数字主键，不是批次号） */
+function openRecords(row) {
+  router.push(`/coupons/${row.id}/records`);
+}
 
 function statusType(status) {
   return { 0: 'info', 1: 'success', 2: 'danger' }[status] || 'info';

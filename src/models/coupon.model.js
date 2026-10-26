@@ -399,6 +399,98 @@ async function getUserCoupons(uid, { carId, status, amount } = {}) {
   }
 }
 
+/**
+ * 后台：某批次的用户领券记录（v1.7.3）
+ *
+ * JOIN pp_user 带出领取人，便于运营按手机号/昵称查谁领了、用了没。
+ * summary 里的「已核销金额」统计的是**已使用**券的面额合计（即真实让利出去的钱）。
+ *
+ * @param {object} opt
+ * @param {string} opt.couponId 批次号（必填）
+ * @param {number} [opt.page] [opt.pageSize] 分页
+ * @param {number|''} [opt.status] 用户券状态筛选 0未使用 1已使用 2已作废
+ * @param {string} [opt.keyword] 手机号 / 昵称 / 账号名 / 券码
+ * @returns {{list: Array, total: number, summary: {unused, used, invalid, usedAmount}}}
+ */
+async function getUserCouponRecords({ couponId, page = 1, pageSize = 10, status, keyword = '' } = {}) {
+  const p = Math.max(1, parseInt(page, 10) || 1);
+  const s = Math.min(100, Math.max(1, parseInt(pageSize, 10) || 10));
+  const offset = (p - 1) * s;
+
+  const db = new MySQL();
+  try {
+    const where = ['u.coupon_id = ?'];
+    const params = [couponId];
+    if (status !== undefined && status !== null && status !== '') {
+      where.push('u.status = ?');
+      params.push(Number(status));
+    }
+    const kw = String(keyword).trim();
+    if (kw) {
+      const like = `%${kw}%`;
+      where.push("(u.coupon_sn LIKE ? OR IFNULL(p.phone,'') LIKE ? OR IFNULL(p.nickname,'') LIKE ? OR IFNULL(p.username,'') LIKE ?)");
+      params.push(like, like, like, like);
+    }
+    const whereSql = where.join(' AND ');
+
+    const rows = await db.query(
+      `SELECT u.coupon_sn, u.coupon_id, u.uid, u.name, u.amount, u.status,
+              u.receive_seq, u.receive_time, u.use_time, u.order_sn,
+              u.use_start_time, u.use_end_time, u.scope_type,
+              p.phone, p.nickname, p.username
+       FROM pp_user_coupon u
+       LEFT JOIN pp_user p ON p.id = u.uid
+       WHERE ${whereSql}
+       ORDER BY u.receive_time DESC, u.id DESC
+       LIMIT ?, ?`,
+      [...params, offset, s]
+    );
+
+    const [cnt] = await db.query(
+      `SELECT COUNT(*) AS total,
+              IFNULL(SUM(CASE WHEN u.status = 0 THEN 1 ELSE 0 END), 0) AS unused,
+              IFNULL(SUM(CASE WHEN u.status = 1 THEN 1 ELSE 0 END), 0) AS used,
+              IFNULL(SUM(CASE WHEN u.status = 2 THEN 1 ELSE 0 END), 0) AS invalid,
+              IFNULL(SUM(CASE WHEN u.status = 1 THEN u.amount ELSE 0 END), 0) AS used_amount
+       FROM pp_user_coupon u
+       LEFT JOIN pp_user p ON p.id = u.uid
+       WHERE ${whereSql}`,
+      params
+    );
+
+    return {
+      list: rows.map((r) => ({
+        coupon_sn: r.coupon_sn,
+        coupon_id: r.coupon_id,
+        uid: r.uid,
+        name: r.name,
+        amount: Number(r.amount),
+        status: Number(r.status),
+        status_text: USER_COUPON_STATUS_TEXT[r.status],
+        receive_seq: Number(r.receive_seq),
+        receive_time: r.receive_time,
+        use_time: r.use_time,
+        order_sn: r.order_sn || '',
+        use_start_time: r.use_start_time,
+        use_end_time: r.use_end_time,
+        scope_type: Number(r.scope_type),
+        phone: r.phone || '',
+        nickname: r.nickname || '',
+        username: r.username || '',
+      })),
+      total: Number(cnt.total),
+      summary: {
+        unused: Number(cnt.unused) || 0,
+        used: Number(cnt.used) || 0,
+        invalid: Number(cnt.invalid) || 0,
+        usedAmount: Number(cnt.used_amount) || 0,
+      },
+    };
+  } finally {
+    db.close();
+  }
+}
+
 /** 按券码取一张用户券（含归属校验） */
 async function getUserCouponBySn(couponSn, uid) {
   const db = new MySQL();
@@ -538,6 +630,7 @@ module.exports = {
   receiveCoupon,
   getUserCoupons,
   getUserCouponBySn,
+  getUserCouponRecords,
   validateCoupon,
   useCoupon,
   revertCoupon,
