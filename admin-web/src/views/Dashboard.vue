@@ -14,7 +14,19 @@
       <el-descriptions :column="3" border>
         <el-descriptions-item label="今日新增订单">{{ stats.orderToday }}</el-descriptions-item>
         <el-descriptions-item label="今日已支付">{{ stats.paidToday }}</el-descriptions-item>
-        <el-descriptions-item label="今日支付金额（已支付订单合计）">￥{{ stats.paidTodayAmount }}</el-descriptions-item>
+        <el-descriptions-item label="今日订单原价（GMV）">￥{{ stats.paidTodayAmount }}</el-descriptions-item>
+        <el-descriptions-item label="今日优惠券抵扣">
+          <span v-if="Number(stats.paidTodayDiscount) > 0" class="amount-discount">
+            -￥{{ stats.paidTodayDiscount }}
+          </span>
+          <span v-else>-</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="今日实收金额">
+          <span class="amount-real">￥{{ stats.paidTodayRealAmount }}</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="口径说明">
+          <span class="sub-tip">实收 = 订单原价 − 优惠券抵扣，实际到账金额以此为准</span>
+        </el-descriptions-item>
       </el-descriptions>
     </el-card>
 
@@ -33,8 +45,21 @@
         </el-table-column>
         <el-table-column prop="orderTotal" label="订单数（单）" min-width="110" />
         <el-table-column prop="paidCount" label="已支付（单）" min-width="110" />
-        <el-table-column label="支付金额（元）" min-width="130">
-          <template #default="{ row }">￥{{ row.paidAmount }}</template>
+        <el-table-column label="订单原价（元）" min-width="130">
+          <template #default="{ row }">￥{{ row.totalAmount }}</template>
+        </el-table-column>
+        <el-table-column label="优惠券抵扣（元）" min-width="130">
+          <template #default="{ row }">
+            <span v-if="Number(row.discountAmount) > 0" class="amount-discount">
+              -￥{{ row.discountAmount }}
+            </span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="实收金额（元）" min-width="130">
+          <template #default="{ row }">
+            <span class="amount-real">￥{{ row.paidAmount }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="支付率" min-width="110">
           <template #default="{ row }">
@@ -71,13 +96,17 @@ function summaryMethod({ columns }) {
   const vals = {
     orderTotal: s ? s.orderTotal : 0,
     paidCount: s ? s.paidCount : 0,
+    totalAmount: s ? s.totalAmount : 0,
+    discountAmount: s ? s.discountAmount : 0,
     paidAmount: s ? s.paidAmount : 0,
   };
   return columns.map((c, index) => {
     if (index === 0) return '近 7 日合计';
     if (c.property === 'orderTotal') return vals.orderTotal;
     if (c.property === 'paidCount') return vals.paidCount;
-    if (c.label === '支付金额（元）') return `￥${vals.paidAmount}`;
+    if (c.label === '订单原价（元）') return `￥${vals.totalAmount}`;
+    if (c.label === '优惠券抵扣（元）') return `-￥${vals.discountAmount}`;
+    if (c.label === '实收金额（元）') return `￥${vals.paidAmount}`;
     return '';
   });
 }
@@ -112,6 +141,13 @@ const cards = computed(() => [
   font-size: 12px;
   color: #909399;
   font-weight: 400;
+}
+.amount-real {
+  font-weight: 600;
+}
+.amount-discount {
+  color: #e6a23c;
+  font-weight: 600;
 }
 .weekday {
   color: #909399;

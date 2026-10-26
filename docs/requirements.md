@@ -410,7 +410,7 @@ total_price                                     // 保持原价不变，GMV/报�
 |---|---|---|
 | `/admin-api/auth/login` | POST | 管理员登录（`adp_admin_user` 表，bcrypt 校验），返回 JWT；同时更新 `last_login_at` |
 | `/admin-api/auth/profile` | GET | 当前管理员信息 |
-| `/admin-api/dashboard/stats` | GET | 概览统计（用户/车辆/订单总数、已支付数、今日订单/支付金额） |
+| `/admin-api/dashboard/stats` | GET | 概览统计（用户/车辆/订单总数、已支付数、今日订单数/支付数；**v1.7.3 金额拆三口径**：`paidTodayAmount` 订单原价 GMV、`paidTodayDiscount` 优惠券抵扣、`paidTodayRealAmount` 实收金额）。`recent7Days` 每日与 summary 同样给出 `totalAmount`/`discountAmount`/`paidAmount` 三口径 |
 | `/admin-api/users` | GET | 用户分页列表（关键词支持手机号/昵称/openid），附订单数与授权数 |
 | `/admin-api/users/:id` | GET | 用户详情（授权记录 `adp_user_auth`、驾驶证、最近 20 单） |
 | `/admin-api/cars` | GET | 车辆分页列表（关键词，可按 `status` 筛选上下架），按 sort 升序 |
@@ -422,15 +422,29 @@ total_price                                     // 保持原价不变，GMV/报�
 | `/admin-api/orders/:id` | GET | 订单详情（含车辆与下单用户信息） |
 | `/admin-api/orders/:id/status` | PUT | 订单履约状态流转（待取车→已取车→已还车→已完成/已取消） |
 | `/admin-api/orders/:id/address` | PUT | **修改取车/还车地址**（v1.6.10，body `{pickup_address?, return_address?}`，可单改一个；校验非空且 ≤100 字符） |
-| `/admin-api/orders/:id/refund` | POST | **后台退款**（v1.6.11，body `{refund_desc?, refund_fee?}`，refund_fee 单位元、缺省全额；**不校验任何订单状态**） |
-| `/admin-api/orders/export` | GET | **导出订单 Excel**（v1.6.13，`.xlsx`）。参数同列表 `pay_status/order_status/keyword`，额外 `scope=all` 时忽略条件导出全部；上限 20000 条；返回文件流需 `responseType=blob`；**v1.7.3 起导出含「优惠券金额 / 实付金额 / 优惠券码」三列** |
+| `/admin-api/orders/:id/refund` | POST | **后台退款**（v1.6.11，body `{refund_desc?, refund_fee?}`，refund_fee 单位元、缺省全额；**不校验任何订单状态**）。**v1.7.3：退款金额以订单 `pay_amount`（实付）为上限**，缺省退全额实付；传入金额超过实付会被 `refund.service` 拒绝（`退款金额不合法：￥X（订单实付 ￥Y）`）——用券后订单若按 `total_price` 退会直接在微信侧失败 |
+| `/admin-api/orders/export` | GET | **导出订单 Excel**（v1.6.13，`.xlsx`）。参数同列表 `pay_status/order_status/keyword`，额外 `scope=all` 时忽略条件导出全部；上限 20000 条；返回文件流需 `responseType=blob`；**v1.7.3 起导出含「优惠金额 / 实付金额 / 优惠券名称 / 优惠券码」四列** |
 | `/admin-api/coupons` | GET | **优惠券批次列表**（v1.7.3，分页；筛选 `name`（匹配名称或批次号）、`status`；附带已领 `received_count`、已用 `used_count`） |
 | `/admin-api/coupons` | POST | **创建券批次**（v1.7.3）：`name`/`amount`/`total_stock`/`receive_start_time`~`receive_end_time`/`use_start_time`~`use_end_time`/`scope_type`(1全场 2指定车辆)/`scope_car_ids`/`per_limit`/`use_per_limit`/`user_scope`(预留)/`bear_type`(默认 platform) |
 | `/admin-api/coupons/:id` | GET | 批次详情 |
 | `/admin-api/coupons/:id` | PUT | 编辑批次：**仅「未开始」状态可改规则**；「活动中」只允许追加库存 |
 | `/admin-api/coupons/:id/status` | PUT | **状态流转**（body `{status: 0未开始 \| 1活动中 \| 2已废弃}`）：已废弃不可逆；**废弃时连带作废该批次下用户已领未用的券** |
 
-管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）+ **优惠券管理（v1.7.3：批次列表/新建/编辑/开始活动/废弃）**。列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
+管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）+ **优惠券管理（v1.7.3：批次列表/新建/编辑/开始活动/废弃）**。
+**v1.7.3 后台金额口径**：优惠券上线后，后台所有涉及钱的地方都要能看出「原价 / 优惠 / 实付」三者的关系，**不能只看 `total_price`**：
+
+| 位置 | 改动 |
+|---|---|
+| 订单列表 | 「总价」改名「**订单原价**」，新增「优惠券（券名，悬停看券码）」「**优惠金额**」「**实付金额**」三列 |
+| 订单详情 | 新增「优惠券 / 优惠金额 / 实付金额」三项 |
+| **退款弹窗** | 原「实付金额」实际显示的是 `total_price`（原价），且**默认退款金额就填的是原价** → 用券订单点退款必然失败。现改为：显示原价/券信息/实付，退款金额**默认值与上限均取 `pay_amount`**，提交前前端再校验一次不得超额，并提示「券将在退款成功后退回用户」 |
+| 概览「今日概览」 | 拆为「今日订单原价 GMV / 优惠券抵扣 / 实收金额」，注明「实收 = 原价 − 抵扣」 |
+| 概览「近 7 日」 | 拆为「订单原价 / 优惠券抵扣 / 实收金额」三列，表尾合计同步 |
+| 导出 Excel | 新增「优惠金额 / 实付金额 / 优惠券名称 / 优惠券码」四列 |
+
+数据源上，`pp_order` 只存 `coupon_sn`，**券名不在订单表里**——后台列表/详情/导出通过 `LEFT JOIN pp_user_coupon uc ON uc.coupon_sn = o.coupon_sn AND o.coupon_sn <> ''` 取 `uc.name` / `uc.amount` 补齐（C 端订单详情同为此逻辑）。**退款金额的服务端上限校验在 `services/refund.service.js`**，后台与小程序端共用，两端口径天然一致。
+
+列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
 
 #### 既有运营接口
 
@@ -530,6 +544,7 @@ total_price                                     // 保持原价不变，GMV/报�
 
 | 版本 | 日期 | 变更内容 | 备注 |
 |---|---|---|---|
+| v1.7.3 | 2026-10-27 | **管理后台金额口径补齐 + 修复后台退款按原价退的 bug**：① **修复**：后台「订单退款」弹窗里标着「实付金额」的字段实际取的是 `total_price`（订单原价），且打开时**默认退款金额就填原价**——用券订单点退款会按原价退，被 `refund.service` 拦截而失败（服务端早有 `refundFee > pay_amount` 校验，不会真的多退钱，但功能不可用且文案误导）。现改为默认/上限均取 `pay_amount`，并加提示与前端二次校验；② 订单列表「总价」改名「订单原价」，新增「优惠券 / 优惠金额 / 实付金额」三列，详情页同步补三项；③ 概览「今日概览」拆为「订单原价 GMV / 优惠券抵扣 / 实收金额」，近 7 日表格与合计同步拆三口径（`totalAmount`/`discountAmount`/`paidAmount`）；④ 导出 Excel 新增「优惠金额 / 实付金额 / 优惠券名称 / 优惠券码」；⑤ 后台列表/详情/导出通过 `LEFT JOIN pp_user_coupon` 补齐券名（`pp_order` 只存 `coupon_sn`，此前后台拿不到券名只能显示兜底文案） | 实测：① 概览与近 7 日均返回三口径且「原价−抵扣=实付」成立；② 46 单抽样金额等式全部成立；③ 后台列表能 JOIN 出券名（真实数据样例：`PP20261027001319` → 「新用户立减20」，原价 29 / 抵扣 20 / 实付 9）；④ 模拟后台误传原价 648（实付 598）→ 被拦截并提示「订单实付 ￥598」，按 598 传则通过金额校验进入微信流程。admin-web 构建通过 |
 | v1.7.3 | 2026-10-26 | **Change Log 排序治理**：① 两份文档的 Change Log **统一改为倒序**（最新版本在最上面）——此前是「追加到末尾」的升序写法与「新条目插到最上面」两种方向混用，表格读起来像版本倒着走，前端同学无法判断哪个是最新口径；② 清理接口文档 Change Log 中混进的**多余分隔行**（把表格从中间截成了两截，看起来像两个独立表）；③ 新增 `scripts/sort_changelog.js`（默认降序，`asc` 切回升序），同版本多条原样保持相对顺序，脚本按 semver 比较版本号，同版本的多条保持原有相对顺序，解析不到版本号的行留在末尾，不会丢失 | Change Log 新增条目直接写在表格**首行**，写完跑一次 `sort_changelog.js` 即可；不要再追加到末尾 |
 | v1.7.3 | 2026-10-26 | **文档可读性整理**：① 两份文档都加了「目录」（全部锚点已校验可跳转），需求文档开头新增「文档地图」表格说明本文与接口文档的分工与交叉索引；② 修正接口文档章节编号冲突（新增的优惠券原误编为 `4.5`，与「查询支付结果」重号，改为 `4.8` 并降级为第 4 章下的三级小节）；③ 新增 `scripts/gen_docs_toc.js`（`check`/`update`/`print` 三个子命令），按 GitHub slug 规则生成锚点，**避免手工写目录导致链接失效**（初版手写的 5 条锚点全部跳不过去，已由工具修正）；④ 新增 `docs/prompt-for-miniprogram-agent.md`（给小程序开发 agent 的派活模板，含金额口径、优惠券流程、手机号必填等硬约束） | 目录锚点请勿手改，新增或改名章节后跑 `update` 即可。两份文档继续保持**拆开**：见「文档地图」中的分工与给外部开发者时的取用建议 |
 | v1.7.3 | 2026-10-26 | **订单联系电话 `contact_phone` 改为必填强校验**：提交订单前校验（未填/空/`"undefined"`/`"null"` → `400 请填写联系人手机号`；位数不对或号段非法 → `400 联系人手机号格式不正确…`），正则 `^1[3-9]\d{9}$`；入参先规范化（`trim`、去空格连字符、去 `+86`/`86` 前缀）后统一落库 11 位纯数字。校验规则抽到新增的 `src/utils/validate.js`，`/checkout` 只规范化不强拦（结算页刚打开时用户还没填），`/createOrder` 做最终拦截 | **背景**：此前完全无校验，前端漏填时把空值/`"undefined"` 直接落库，历史 45 单中 35 单为空号，门店无法联系用车人。实测 13 项全通（5 种合法写法均能下单且落库为 `13800138000`，8 种非法输入全部被拒） |

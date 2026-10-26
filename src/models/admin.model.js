@@ -228,9 +228,13 @@ async function getOrderList({ page = 1, pageSize = 10, pay_status, order_status,
   const { where, params } = buildOrderWhere({ pay_status, order_status, keyword });
 
   try {
+    // v1.7.3：JOIN 用户券带出券名/面额（pp_order 只存了 coupon_sn，券名需回查 pp_user_coupon）
     const rows = await db.query(
-      `SELECT o.*, c.car_name, c.image_url FROM pp_order o
+      `SELECT o.*, c.car_name, c.image_url,
+              uc.name AS coupon_name, uc.amount AS coupon_amount
+       FROM pp_order o
        LEFT JOIN pp_car c ON c.id = o.car_id
+       LEFT JOIN pp_user_coupon uc ON uc.coupon_sn = o.coupon_sn AND o.coupon_sn <> ''
        ${where} ORDER BY o.id DESC LIMIT ?, ?`,
       [...params, offset, size]
     );
@@ -244,9 +248,13 @@ async function getOrderList({ page = 1, pageSize = 10, pay_status, order_status,
 async function getOrderDetail(id) {
   const db = new MySQL();
   try {
+    // v1.7.3：带出券名/面额，供详情页展示（退款弹窗也要用到，确认券已抵扣了多少）
     const [order] = await db.query(
-      `SELECT o.*, c.car_name, c.image_url, c.des AS car_des
-       FROM pp_order o LEFT JOIN pp_car c ON c.id = o.car_id
+      `SELECT o.*, c.car_name, c.image_url, c.des AS car_des,
+              uc.name AS coupon_name, uc.amount AS coupon_amount
+       FROM pp_order o
+       LEFT JOIN pp_car c ON c.id = o.car_id
+       LEFT JOIN pp_user_coupon uc ON uc.coupon_sn = o.coupon_sn AND o.coupon_sn <> ''
        WHERE o.id = ? LIMIT 1`,
       [id]
     );
@@ -299,9 +307,15 @@ async function updateOrderAddress(id, { pickup_address, return_address }) {
 
 /**
  * 近 N 日订单统计（v1.6.13，用于概览页趋势）
- * 按 create_time 分组统计每日「订单数 / 已支付数 / 已支付金额」，并补齐无订单的日期
+ * 按 create_time 分组统计每日「订单数 / 已支付数 / 金额」，并补齐无订单的日期
+ *
+ * v1.7.3 金额拆成三个口径，避免优惠券上线后把营收算多：
+ *   totalAmount    原价合计（GMV）
+ *   discountAmount 优惠券抵扣合计
+ *   paidAmount     实收金额合计（= 原价 − 抵扣）
  * @param {number} days 天数，默认 7
- * @returns {Array<{date, weekday, orderTotal, paidCount, paidAmount}>} 按日期升序（最早在前）
+ * @returns {{list: Array<{date, weekday, orderTotal, paidCount, totalAmount, discountAmount, paidAmount}>, summary: object}}
+ *          按日期升序（最早在前）
  */
 async function getRecentOrderStats(days = 7) {
   const db = new MySQL();
@@ -310,7 +324,9 @@ async function getRecentOrderStats(days = 7) {
       `SELECT DATE(create_time) AS date,
               COUNT(*) AS order_total,
               SUM(CASE WHEN pay_status = 1 THEN 1 ELSE 0 END) AS paid_count,
-              IFNULL(SUM(CASE WHEN pay_status = 1 THEN total_price ELSE 0 END), 0) AS paid_amount
+              IFNULL(SUM(CASE WHEN pay_status = 1 THEN total_price ELSE 0 END), 0) AS total_amount,
+              IFNULL(SUM(CASE WHEN pay_status = 1 THEN IFNULL(discount_price, 0) ELSE 0 END), 0) AS discount_amount,
+              IFNULL(SUM(CASE WHEN pay_status = 1 THEN IFNULL(pay_amount, total_price) ELSE 0 END), 0) AS paid_amount
        FROM pp_order
        WHERE create_time >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
        GROUP BY DATE(create_time)
@@ -337,6 +353,8 @@ async function getRecentOrderStats(days = 7) {
         weekday: weekNames[d.day()],
         orderTotal: row ? Number(row.order_total) : 0,
         paidCount: row ? Number(row.paid_count) : 0,
+        totalAmount: row ? Number(row.total_amount) : 0,
+        discountAmount: row ? Number(row.discount_amount) : 0,
         paidAmount: row ? Number(row.paid_amount) : 0,
       });
     }
@@ -345,9 +363,11 @@ async function getRecentOrderStats(days = 7) {
       (acc, cur) => ({
         orderTotal: acc.orderTotal + cur.orderTotal,
         paidCount: acc.paidCount + cur.paidCount,
+        totalAmount: acc.totalAmount + cur.totalAmount,
+        discountAmount: acc.discountAmount + cur.discountAmount,
         paidAmount: acc.paidAmount + cur.paidAmount,
       }),
-      { orderTotal: 0, paidCount: 0, paidAmount: 0 }
+      { orderTotal: 0, paidCount: 0, totalAmount: 0, discountAmount: 0, paidAmount: 0 }
     );
     return { list: result, summary };
   } finally {
@@ -365,9 +385,13 @@ async function getOrderExportList(params = {}, limit = 20000) {
   const db = new MySQL();
   const { where, params: bind } = buildOrderWhere(params);
   try {
+    // v1.7.3：导出同样带出券名
     const rows = await db.query(
-      `SELECT o.*, c.car_name FROM pp_order o
+      `SELECT o.*, c.car_name,
+              uc.name AS coupon_name, uc.amount AS coupon_amount
+       FROM pp_order o
        LEFT JOIN pp_car c ON c.id = o.car_id
+       LEFT JOIN pp_user_coupon uc ON uc.coupon_sn = o.coupon_sn AND o.coupon_sn <> ''
        ${where} ORDER BY o.id DESC LIMIT ?`,
       [...bind, limit]
     );

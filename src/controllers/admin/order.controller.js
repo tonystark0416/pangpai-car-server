@@ -135,8 +135,9 @@ async function exportOrders(req, res) {
     { header: '司机单价', key: 'driver_price', width: 12 },
     { header: '司机合计', key: 'driver_total_price', width: 12 },
     { header: '订单总额(原价)', key: 'total_price', width: 14 },
-    { header: '优惠券金额', key: 'discount_price', width: 12 },
+    { header: '优惠金额', key: 'discount_price', width: 12 },
     { header: '实付金额', key: 'pay_amount', width: 12 },
+    { header: '优惠券名称', key: 'coupon_name', width: 20 },
     { header: '优惠券码', key: 'coupon_sn', width: 26 },
     { header: '支付状态', key: 'pay_status_text', width: 10 },
     { header: '履约状态', key: 'order_status_text', width: 12 },
@@ -171,6 +172,7 @@ async function exportOrders(req, res) {
       discount_price: Number(r.discount_price || 0),
       pay_amount: Number(r.pay_amount ?? r.total_price),
       coupon_sn: r.coupon_sn || '-',
+      coupon_name: r.coupon_name || '-', // v1.7.3：券名（无券为 -）
       pay_status_text: PAY_STATUS_TEXT[r.pay_status] ?? String(r.pay_status),
       order_status_text: ORDER_STATUS_TEXT[r.order_status] ?? String(r.order_status),
       transaction_id: r.transaction_id || '-',

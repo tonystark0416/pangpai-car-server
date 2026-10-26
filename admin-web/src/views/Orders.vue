@@ -67,8 +67,31 @@
         <el-table-column label="整备费" width="100">
           <template #default="{ row }">￥{{ row.clean_price || 0 }}</template>
         </el-table-column>
-        <el-table-column label="总价" width="100">
+        <el-table-column label="订单原价" width="100">
           <template #default="{ row }">￥{{ row.total_price }}</template>
+        </el-table-column>
+        <el-table-column label="优惠券" min-width="130">
+          <template #default="{ row }">
+            <span v-if="row.coupon_sn">
+              <el-tooltip :content="`券码 ${row.coupon_sn}`" placement="top">
+                <el-tag size="small" type="warning">{{ row.coupon_name || '优惠券' }}</el-tag>
+              </el-tooltip>
+            </span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="优惠金额" width="100">
+          <template #default="{ row }">
+            <span v-if="Number(row.discount_price) > 0" class="amount-discount">
+              -￥{{ Number(row.discount_price).toFixed(2) }}
+            </span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="实付金额" width="110">
+          <template #default="{ row }">
+            <span class="amount-real">￥{{ realAmount(row) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="支付状态" width="100">
           <template #default="{ row }">
@@ -136,7 +159,23 @@
         <el-descriptions-item label="车辆租金">￥{{ detail.rent_total_price }}</el-descriptions-item>
         <el-descriptions-item label="保险费">￥{{ detail.server_total_price }}</el-descriptions-item>
         <el-descriptions-item label="司机费">￥{{ detail.driver_total_price }}</el-descriptions-item>
-        <el-descriptions-item label="总价">￥{{ detail.total_price }}</el-descriptions-item>
+        <el-descriptions-item label="订单原价">￥{{ Number(detail.total_price).toFixed(2) }}</el-descriptions-item>
+        <el-descriptions-item label="优惠券">
+          <span v-if="detail.coupon_sn">
+            <el-tag size="small" type="warning">{{ detail.coupon_name || '优惠券' }}</el-tag>
+            <span class="coupon-code">券码 {{ detail.coupon_sn }}</span>
+          </span>
+          <span v-else>未使用</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="优惠金额">
+          <span v-if="Number(detail.discount_price) > 0" class="amount-discount">
+            -￥{{ Number(detail.discount_price).toFixed(2) }}
+          </span>
+          <span v-else>-</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="实付金额">
+          <span class="amount-real">￥{{ realAmount(detail) }}</span>
+        </el-descriptions-item>
         <el-descriptions-item label="支付状态">
           <el-tag :type="payStatusType(detail.pay_status)" size="small">{{ payStatusText(detail.pay_status) }}</el-tag>
         </el-descriptions-item>
@@ -184,9 +223,19 @@
         title="退款成功后订单将变为「已退款 / 已取消」，不可撤销" style="margin-bottom: 16px" />
       <el-form label-width="90px">
         <el-form-item label="订单号">{{ refundForm.order_sn }}</el-form-item>
-        <el-form-item label="实付金额">￥{{ refundForm.total_price }}</el-form-item>
+        <el-form-item label="订单原价">￥{{ Number(refundForm.total_price).toFixed(2) }}</el-form-item>
+        <el-form-item v-if="Number(refundForm.discount_price) > 0" label="优惠券抵扣">
+          <span class="amount-discount">-￥{{ Number(refundForm.discount_price).toFixed(2) }}</span>
+          <span class="coupon-code">{{ refundForm.coupon_name || '优惠券' }}（{{ refundForm.coupon_sn }}）</span>
+        </el-form-item>
+        <el-form-item label="实付金额">
+          <span class="amount-real">￥{{ Number(refundForm.pay_amount).toFixed(2) }}</span>
+        </el-form-item>
+        <el-alert v-if="Number(refundForm.discount_price) > 0" type="info" :closable="false" show-icon
+          title="该订单使用了优惠券，微信侧最多只能退用户的实付金额；优惠券将在退款成功后退回用户账户"
+          style="margin-bottom: 16px" />
         <el-form-item label="退款金额">
-          <el-input-number v-model="refundForm.refund_fee" :min="0.01" :max="Number(refundForm.total_price)"
+          <el-input-number v-model="refundForm.refund_fee" :min="0.01" :max="Number(refundForm.pay_amount)"
             :precision="2" :step="1" style="width: 100%" />
         </el-form-item>
         <el-form-item label="退款原因">
@@ -236,7 +285,29 @@ const addressForm = reactive({ id: null, pickup_address: '', return_address: '' 
 
 const refundVisible = ref(false);
 const refundSaving = ref(false);
-const refundForm = reactive({ id: null, order_sn: '', total_price: 0, refund_fee: 0, refund_desc: '' });
+/**
+ * v1.7.3：退款以**实付金额**为准。
+ * total_price 是订单原价，用券后 ≠ 用户实际支付，拿它当退款上限会导致微信侧退款失败
+ * （退款金额不能超过原支付金额），所以这里单独保存 pay_amount 并作为默认值与最大值。
+ */
+const refundForm = reactive({
+  id: null,
+  order_sn: '',
+  total_price: 0,
+  discount_price: 0,
+  pay_amount: 0, // 用户实付，退款的默认金额与上限
+  coupon_sn: '',
+  coupon_name: '',
+  refund_fee: 0,
+  refund_desc: '',
+});
+
+/** 实付金额展示（历史订单 pay_amount 可能为空，兜底取原价） */
+function realAmount(row) {
+  const v = Number(row && row.pay_amount);
+  const fallback = Number(row && row.total_price) || 0;
+  return (v > 0 ? v : fallback).toFixed(2);
+}
 
 async function load() {
   loading.value = true;
@@ -308,13 +379,31 @@ function openAddress(row) {
 function openRefund(row) {
   refundForm.id = row.id;
   refundForm.order_sn = row.order_sn;
-  refundForm.total_price = Number(row.total_price);
-  refundForm.refund_fee = Number(row.total_price);
+  refundForm.total_price = Number(row.total_price) || 0;
+  refundForm.discount_price = Number(row.discount_price) || 0;
+  refundForm.coupon_sn = row.coupon_sn || '';
+  refundForm.coupon_name = row.coupon_name || '';
+  // v1.7.3：默认退「实付金额」而非原价（历史订单 pay_amount 为空时兜底原价）
+  const paid = Number(row.pay_amount);
+  refundForm.pay_amount = paid > 0 ? paid : Number(row.total_price) || 0;
+  refundForm.refund_fee = refundForm.pay_amount;
   refundForm.refund_desc = '';
   refundVisible.value = true;
 }
 
 async function submitRefund() {
+  // v1.7.3：前端再拦一道——退款超过实付金额时微信侧必定失败，与其报错不如提前提示
+  if (!refundForm.refund_fee || Number(refundForm.refund_fee) <= 0) {
+    ElMessage.warning('请填写退款金额');
+    return;
+  }
+  if (Number(refundForm.refund_fee) > Number(refundForm.pay_amount)) {
+    ElMessage.error(
+      `退款金额不能超过实付金额 ￥${Number(refundForm.pay_amount).toFixed(2)}` +
+        (Number(refundForm.discount_price) > 0 ? '（订单原价未全部实付，优惠券部分不可退）' : '')
+    );
+    return;
+  }
   refundSaving.value = true;
   try {
     const data = await api.post(`/orders/${refundForm.id}/refund`, {
@@ -364,6 +453,19 @@ onMounted(load);
 <style scoped>
 .filter-card {
   margin-bottom: 16px;
+}
+/* v1.7.3：金额展示样式——实付加粗突出，优惠用红色表示抵扣 */
+.amount-real {
+  font-weight: 600;
+}
+.amount-discount {
+  color: #e6a23c;
+  font-weight: 600;
+}
+.coupon-code {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #909399;
 }
 .filter-card :deep(.el-form-item) {
   margin-bottom: 0;
