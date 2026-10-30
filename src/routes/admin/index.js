@@ -9,6 +9,8 @@ const user = require('../../controllers/admin/user.controller');
 const car = require('../../controllers/admin/car.controller');
 const order = require('../../controllers/admin/order.controller');
 const coupon = require('../../controllers/admin/coupon.controller');
+const upload = require('../../controllers/admin/upload.controller');
+const { uploadCarImage } = require('../../middlewares/carUpload');
 
 const router = express.Router();
 
@@ -33,6 +35,9 @@ router.post('/cars', asyncHandler(car.create));
 router.put('/cars/:id', asyncHandler(car.update));
 router.put('/cars/:id/status', asyncHandler(car.updateStatus));
 router.delete('/cars/:id', asyncHandler(car.remove));
+
+// 图片上传（v1.7.4：车辆图片 -> uploads/car_img）
+router.post('/upload/car-image', uploadCarImage, asyncHandler(upload.uploadCarImage));
 
 // 优惠券管理（v1.7.3）
 router.get('/coupons', asyncHandler(coupon.list));

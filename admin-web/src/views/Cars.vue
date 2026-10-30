@@ -66,13 +66,23 @@
         @current-change="load" @size-change="load" />
     </el-card>
 
-    <el-dialog v-model="formVisible" :title="form.id ? '编辑车辆' : '新增车辆'" width="480px">
+    <el-dialog v-model="formVisible" :title="form.id ? '编辑车辆' : '新增车辆'" width="560px">
       <el-form :model="form" label-width="90px">
         <el-form-item label="车名" required>
           <el-input v-model="form.car_name" maxlength="50" />
         </el-form-item>
-        <el-form-item label="图片URL" required>
-          <el-input v-model="form.image_url" placeholder="https://... 或 /images/xxx.png" />
+        <el-form-item label="车辆图片" required>
+          <div class="upload-row">
+            <el-upload :show-file-list="false" :http-request="uploadImage" :before-upload="beforeUpload"
+              accept="image/jpeg,image/png,image/webp">
+              <el-button type="primary" :loading="uploading">选择图片上传</el-button>
+            </el-upload>
+            <el-image v-if="form.image_url" :src="previewUrl" :preview-src-list="[previewUrl]" preview-teleported
+              fit="cover" class="thumb" />
+            <span v-else class="sub-fee">暂无图片</span>
+          </div>
+          <div class="tip">支持 jpg / png / webp，单张 ≤ 5MB；上传后自动填入下方地址</div>
+          <el-input v-model="form.image_url" placeholder="也可直接填写图片地址" clearable />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.des" maxlength="100" />
@@ -116,13 +126,14 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '../api';
 import { formatDateTime } from '../utils/format';
 
 const loading = ref(false);
 const saving = ref(false);
+const uploading = ref(false);
 const rows = ref([]);
 const total = ref(0);
 const query = reactive({ page: 1, pageSize: 10, keyword: '', status: '' });
@@ -144,6 +155,39 @@ const form = reactive({
 
 /** 费用字段的默认值（新增车辆 / 老数据缺失时兜底） */
 const DEFAULT_FEE = { clean_price: 50, insurance_price_l1: 100, insurance_price_l2: 200 };
+
+/** 车辆图片上传限制：与后端 src/middlewares/carUpload.js 保持一致 */
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const IMAGE_MAX_SIZE = 5 * 1024 * 1024;
+const previewUrl = computed(() => form.image_url);
+
+function beforeUpload(file) {
+  if (!IMAGE_TYPES.includes(file.type)) {
+    ElMessage.error('仅支持 jpg / png / webp 格式的图片');
+    return false;
+  }
+  if (file.size > IMAGE_MAX_SIZE) {
+    ElMessage.error('图片大小不能超过 5MB');
+    return false;
+  }
+  return true;
+}
+
+/** 自定义上传：走统一 api 实例以带上 JWT，成功回填 form.image_url */
+async function uploadImage({ file }) {
+  const formData = new FormData();
+  formData.append('file', file);
+  uploading.value = true;
+  try {
+    const data = await api.post('/upload/car-image', formData, { timeout: 30000 });
+    form.image_url = data.url;
+    ElMessage.success('图片上传成功');
+  } catch (e) {
+    /* 失败提示由 api 拦截器统一处理 */
+  } finally {
+    uploading.value = false;
+  }
+}
 
 async function load() {
   loading.value = true;
@@ -268,6 +312,17 @@ onMounted(load);
 .sub-fee {
   color: #909399;
   font-size: 12px;
+}
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.thumb {
+  width: 120px;
+  height: 70px;
+  border-radius: 4px;
+  background: #f5f7fa;
 }
 .promo {
   color: #f56c6c;
