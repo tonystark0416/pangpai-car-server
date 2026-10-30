@@ -1,0 +1,39 @@
+---
+description: pangpai-car 文档收尾工作流：requirements.md 正文与 Change Log 怎么改、两个脚本怎么跑、C 端改动如何联动
+alwaysApply: false
+enabled: true
+updatedAt: 2026-10-31T00:00:00.000Z
+provider:
+---
+
+# pangpai-car 文档收尾工作流
+
+迭代收尾、写完代码准备汇报时使用本报告的方法。
+
+## 文档三件套与分工
+
+| 文档 | 读者 | 回答什么 |
+|---|---|---|
+| `docs/requirements.md` | 项目负责人、后端迭代 | 为什么这么做、规则是什么（含目录结构、表结构、部署、Change Log） |
+| `docs/api-for-miniprogram.md` | 小程序前端 | 接口怎么调（入参/响应/枚举/错误码） |
+| `docs/prompt-for-miniprogram-agent.md` | 给小程序 agent 派活 | 含硬约束的 prompt 模板 |
+
+## 收尾步骤（按顺序）
+
+1. **顶部版本号**：`> 版本：vX.Y.Z ｜ 日期：YYYY-MM-DD ｜ 状态：迭代中`，版本号递增。
+2. **正文**：按改动落点更新——技术栈表、§1.2 目录结构、§2.x 业务小节、§3 表结构、§4 部署。新增后台能力时，在 §2.4 的接口表加一行、正文加一小节。
+3. **Change Log**：新条目**写在表格首行**（倒序，最新版本在最上面；绝不要追加到末尾）。
+4. **C 端联动**：只要动了小程序端接口（入参/响应/枚举），同步更新接口文档及其 Change Log。纯后台 `/admin-api` 改动不需要。
+5. **跑脚本**：
+   ```bash
+   node scripts/sort_changelog.js          # Change Log 按版本号降序重排
+   node scripts/gen_docs_toc.js check      # 校验两份文档目录锚点是否都能跳转
+   node scripts/gen_docs_toc.js update     # 新增/改名章节后重写目录区块
+   ```
+6. **前端验证**：`cd admin-web && npm run build`。
+
+## 硬约定
+
+- 「目录」区块由 `gen_docs_toc.js` 生成，**不要手改锚点**（GitHub slug 规则不直观，⭐ 会保留、连续空格会变连续连字符，手写极易失效）。
+- Change Log 条目要写清「改了什么 + 为什么 + 实测结果 + 踩坑记录」，供后来人追溯，不要只写一句"优化上传"。
+- 文档章节编号新增时注意查重（历史上出现过两处 `4.5` 重号）。

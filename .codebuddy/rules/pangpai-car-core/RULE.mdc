@@ -1,0 +1,45 @@
+---
+description: pangpai-car 项目红线规则：git 提交纪律、迭代必须同步需求文档、金额口径与计价唯一真源
+alwaysApply: true
+enabled: true
+updatedAt: 2026-10-31T00:00:00.000Z
+provider:
+---
+
+# pangpai-car 项目红线
+
+## 1. Git 纪律（最优先）
+
+- **严禁自动执行 `git commit` / `git push`。** 只在用户明确说"提交代码"或"推送到 git"时才执行。
+- 推送前必须先把将要提交的内容列给用户确认。
+- 用户会自己攒改动，小改动不要主动建议或代为提交。
+
+## 2. 迭代完成的判定标准
+
+代码写完不算完成。每次迭代必须：
+
+1. 更新 `docs/requirements.md` **正文**相关章节与顶部**版本号 / 日期**；
+2. 在 Change Log **表格首行**插入条目（倒序，最新在最上）；
+3. 改动涉及 C 端接口时，同步 `docs/api-for-miniprogram.md` 及其 Change Log；
+4. 跑 `node scripts/sort_changelog.js` 与 `node scripts/gen_docs_toc.js check`；
+5. 前端改动至少 `cd admin-web && npm run build` 通过。
+
+详见 `.codebuddy/rules/pangpai-car-docs/RULE.mdc`（需要时加载）。
+
+## 3. 业务口径红线
+
+- **金额以 `pay_amount`（实付）为准**，`total_price` 是原价。退款上限、支付核验、统计拆算一律用实付；新代码务必写 `pay_amount ?? total_price` 兜底，漏写会算成 0。
+- **所有计价走 `src/services/pricing.service.js`**，不得在其它地方重算价格。
+- 优惠券：默认不使用，必须由用户手选；订单金额 ≤ 券面额则该券不可用。
+- 上传目录不要手工创建，代码里用 `mkdirSync(recursive:true)` 随服务启动自动生成。
+
+## 4. 动手前
+
+- 不确定就先读 `AGENTS.md`（协作契约）与 `docs/ai-context.md`（深度技术上下文），再读 `docs/requirements.md` 对应章节。
+- 不要把猜测写成既成事实施加到文档里；无法确认的事实先核实（`grep` / 读代码 / 跑脚本）。
+
+## 5. 环境注意
+
+- 服务器上先把 `.env` 的 `IMAGE_BASE_URL` 配好，否则上传返回相对路径，小程序读不到图片。
+- 本地 `.env` 直连**线上生产库**，任何本地写操作都会改生产数据。
+- 本机 Node 18，`npm install` 会出现 `@vueuse/core` 的 EBADENGINE **警告**（要求 node>=22），属正常，构建与运行均验证通过，不要为此改依赖版本。

@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.7.3 ｜ 日期：2026-10-25 ｜ 状态：迭代中
+> 版本：v1.7.4 ｜ 日期：2026-10-31 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -56,7 +56,7 @@
 | 数据库 | MySQL（mysql2，Promise 化封装于 `src/utils/mysql.js`） |
 | 支付 | 微信支付 V2（JSAPI 统一下单 / 查单 / 退款，MD5 签名 + XML + p12 证书） |
 | 定时任务 | node-schedule（独立进程） |
-| 文件上传 | multer（单文件 `file`，上限 10MB） |
+| 文件上传 | multer（通用上传 `POST /upload`：单文件 `file`、上限 10MB、落 `uploads` 根；**v1.7.4 后台车辆图 `uploads/car_img`**：jpg/png/webp、单张 ≤5MB） |
 | 后台鉴权 | JWT（jsonwebtoken，`src/utils/jwt.js`，中间件 `adminAuth`） |
 | Excel 导出 | exceljs（v1.6.13 起，后台订单导出为 `.xlsx`） |
 | 管理后台前端 | Vue 3 + Vite + Element Plus + Pinia（`admin-web/`，产物由 Express 托管至 `/admin`） |
@@ -71,8 +71,11 @@ pangpai-car/
 ├── package.json                 # scripts: start / dev / task:token
 ├── ecosystem.config.cjs         # PM2 配置（主服务 pangpaicar + token 任务 pangpai-token）
 ├── pangpaicar_start.sh          # 服务器启动脚本
+├── AGENTS.md                    # **AI 协作契约与项目理解入口**（CodeBuddy / Cursor / Claude Code / Codex 通用，随仓库走，换账号不丢）
+├── .codebuddy/rules/            # CodeBuddy 项目规则（各 `RULE.mdc`，入库共享）：红线约束 / 文档工作流
 ├── docs/
 │   ├── requirements.md          # 本需求文档（唯一需求与迭代追踪文档）
+│   ├── ai-context.md            # **AI 深度技术上下文**：链路实现细节、SQL、易错点明细（供 Agent 开工前通读）
 │   └── api-for-miniprogram.md   # 交付小程序前端的接口文档（含 Change Log）
 ├── scripts/                     # 一次性迁移脚本（均幂等，执行后保留备查）
 │   ├── local-dev-init.sql                     # 本地一键建表 + 种子数据
@@ -84,7 +87,7 @@ pangpai-car/
 │   ├── gen_docs_toc.js                        # v1.7.3 文档目录生成/校验（见下）
 │   └── sort_changelog.js                      # v1.7.3 Change Log 按版本号排序（见下）
 ├── https/                       # SSL 证书（不入库）
-├── uploads/                     # 上传目录（不入库）
+├── uploads/                     # 上传目录（不入库）：根=通用上传；car_img/=v1.7.4 后台车辆图片（服务启动自动创建）
 ├── logs/                        # PM2 日志（不入库）
 ├── admin-web/                   # 管理后台前端（Vue 3 + Vite + Element Plus）
 │   ├── vite.config.js           # dev 代理 /admin-api、/images 至 3002
@@ -95,7 +98,7 @@ pangpai-car/
 │       ├── layout/AdminLayout.vue  # 侧边栏（概览/订单/车辆/优惠券/用户）
 │       ├── utils/format.js      # formatDateTime（东八区）
 │       ├── constants.js
-│       └── views/               # Login / Dashboard / Orders / Cars / Coupons / Users
+│       └── views/               # Login / Dashboard / Orders / Cars / Coupons / CouponRecords / Users
 └── src/
     ├── config/index.js          # 统一配置中心（读 .env）
     ├── routes/                  # 路由层（薄层，只做挂载）
@@ -118,7 +121,7 @@ pangpai-car/
     │   ├── coupon.controller.js # v1.7.3 可领券列表 / 领券 / 我的券包
     │   ├── wechat.controller.js # 小程序码 + 企微回调
     │   ├── upload.controller.js
-    │   └── admin/               # 后台：auth / car / order / user / coupon(v1.7.3)
+    │   └── admin/               # 后台：auth / car / order / user / coupon(v1.7.3) / upload(v1.7.4)
     ├── models/                  # 数据访问层（纯 SQL）
     │   ├── user.model.js        # pp_user / pp_user_auth / pp_driver
     │   ├── car.model.js         # pp_car
@@ -136,7 +139,8 @@ pangpai-car/
     ├── middlewares/
     │   ├── asyncHandler.js      # async 路由异常包装器
     │   ├── adminAuth.js         # 后台 JWT 校验
-    │   └── upload.js            # multer 上传实例
+    │   ├── upload.js            # multer 通用上传实例（uploads 根，10MB）
+│   └── carUpload.js         # v1.7.4 后台车辆图片上传（uploads/car_img，格式/大小校验 + 错误统一转 JSON）
     ├── utils/
     │   ├── mysql.js             # MySQL 连接封装（含错误容错）
     │   └── jwt.js               # 后台 token 签发 / 校验
@@ -160,6 +164,17 @@ node scripts/sort_changelog.js        # Change Log 按版本号重排（默认�
 ```
 
 **Change Log 统一倒序**（最新版本在最上面）：历史上是「追加到末尾」的升序写法，与后来「新条目插到最上面」的写法混用导致顺序错乱，前端同学按行读下来会误以为版本倒着走。新条目直接写在 Change Log 表格首行，写完跑一次 `sort_changelog.js` 即可。
+
+**给 AI 的三份入口文件（v1.7.4）**：
+
+| 文件 | 谁会读 | 内容 |
+|---|---|---|
+| `AGENTS.md`（根目录） | **任何 AI Agent / 新会话** | 协作契约：红线规则（不自动 commit/push、迭代必须更文档）、项目速查、目录地图、编码约定、已知坑清单。CodeBuddy 在无 `CODEBUDDY.md` 时自动加载全文；Cursor / Claude Code / Codex 同样识别该文件 |
+| `.codebuddy/rules/*/RULE.mdc` | CodeBuddy | 结构化项目规则（frontmatter：`description` / `alwaysApply` / `enabled`）。`pangpai-car-core` 常驻加载，`pangpai-car-docs` 按需加载 |
+| `docs/ai-context.md` | 要动手改代码的 Agent | 深度技术上下文：各链路实现细节、关键 SQL、枚举、基础设施、缺陷明细 |
+
+> **背景**：项目约定此前只存在于 AI 的账号记忆里，更换 CodeBuddy 账号后会整体丢失（2026-10-31 实测发生了「不知道不能自动 commit、不知道要同步文档」的情况）。这三份文件**入库随项目走**，是当前唯一可靠的载体。
+> **维护约定**：红线规则变化时，`AGENTS.md` 与 `.codebuddy/rules/pangpai-car-core/RULE.mdc` 必须**同步修改**，避免两处口径打架；实现细节有变化时更新 `docs/ai-context.md`。
 
 ### 1.3 配置管理（v1.1.0）
 
@@ -430,6 +445,7 @@ total_price                                     // 保持原价不变，GMV/报�
 | `/admin-api/coupons/:id` | PUT | 编辑批次：**仅「未开始」状态可改规则**；「活动中」只允许追加库存 |
 | `/admin-api/coupons/:id/status` | PUT | **状态流转**（body `{status: 0未开始 \| 1活动中 \| 2已废弃}`）：已废弃不可逆；**废弃时连带作废该批次下用户已领未用的券** |
 | `/admin-api/coupons/:id/records` | GET | **用户领券记录**（v1.7.3，二级页面数据源）。`:id` 是 `pp_coupon` 的**数字主键**（不是批次号）；分页 `page`/`pageSize`，筛选 `status`（0未使用 1已使用 2已作废）与 `keyword`（券码/手机号/昵称/账号名）。返回 `{coupon, list, total, summary{unused,used,invalid,usedAmount}}`，`usedAmount` 为已使用券的面额合计（真实让利额） |
+| `/admin-api/upload/car-image` | POST | **v1.7.4 新增**：后台车辆图片上传。`multipart/form-data`，字段名 `file`；限 jpg/png/webp、单张 ≤5MB；落盘 `uploads/car_img`；返回 `{code:0,data:{url,filename,size}}`，`url` 可直接写入 `car.image_url`。失败一律 HTTP 400 + `{code:400,msg}` |
 
 管理后台前端（`admin-web/`，Vue 3 + Vite + Element Plus + Pinia）：登录页 + 概览 + 订单管理（筛选/详情/状态流转）+ 车辆管理（CRUD/图片预览）+ 用户管理（详情含跨小程序授权记录）+ **优惠券管理（v1.7.3：批次列表/新建/编辑/开始活动/废弃 +「领券记录」二级页面 `coupons/:id/records`）**。
 
@@ -450,7 +466,29 @@ total_price                                     // 保持原价不变，GMV/报�
 
 数据源上，`pp_order` 只存 `coupon_sn`，**券名不在订单表里**——后台列表/详情/导出通过 `LEFT JOIN pp_user_coupon uc ON uc.coupon_sn = o.coupon_sn AND o.coupon_sn <> ''` 取 `uc.name` / `uc.amount` 补齐（C 端订单详情同为此逻辑）。**退款金额的服务端上限校验在 `services/refund.service.js`**，后台与小程序端共用，两端口径天然一致。
 
-列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
+列表/详情时间统一经 `src/utils/format.js` 的 `formatDateTime` 格式化为 `YYYY-MM-DD HH:mm:ss`（东八区，v1.6.4；**v1.7.4 补齐优惠券两处漏用的地方**）。开发模式 `npm run dev`（vite 代理 `/admin-api` 与 `/images` 至 3002），构建产物 `dist/` 由 Express 静态托管（v1.6.3 方案B，`/admin` 路径）。
+
+> **v1.7.4 时间格式化修复**：优惠券批次列表的「领取时间 / 使用时间」两列、以及「领券记录」页**批次信息区块**的领取/使用时间，此前直接打印 MySQL `DATETIME` 序列化出的 ISO UTC 串（如 `2026-10-25T16:00:00.000Z`），运营侧不可读。现已统一接入 `formatDateTime`。**连带修复编辑弹窗回显**：`openForm` 原先把 ISO 串直接赋给 `value-format="YYYY-MM-DD HH:mm:ss"` 的 `el-date-picker`，选择器无法解析（Invalid Date / 显示为空），现回显前同样先格式化。这是既有工具的漏用补齐，无新增工具函数。
+
+#### 后台车辆图片上传（v1.7.4）
+
+新增/编辑车辆弹窗的「车辆图片」支持**直接选图上传**（此前只能手填图片 URL）：
+
+| 项 | 规则 |
+|---|---|
+| 接口 | `POST /admin-api/upload/car-image`，**在 `adminAuth` 之后注册，必须带 JWT** |
+| 字段名 | `file`（`multipart/form-data`），单个请求一张 |
+| 落地目录 | `uploads/car_img`，即 `UPLOAD_DIR` 下的子目录；**服务启动即自动 `mkdirSync(recursive:true)` 创建，部署时无需手工建目录**（`uploads` 本身同理） |
+| 允许格式 | jpg / png / webp，按 MIME 白名单校验，**后缀不取自 `originalname`**，规避中文/空格文件名与伪造后缀 |
+| 大小上限 | 单张 5MB |
+| 文件名 | `car-<yyyymmddHHMMSS>-<8位随机>.<ext>`，避免同名覆盖 |
+| 返回 | `{code:0,data:{url,filename,size}}`，`url` = `IMAGE_BASE_URL + /images/car_img/xxx.png`，可直接回填 `image_url` |
+| 错误处理 | 超限 / 格式不符 / 字段名不对统一返回 HTTP 400 + `{code:400,msg}`——multer 的错误不走 Express 异常链，若不加包装会被全局异常吞成 500 |
+
+前端（`Cars.vue`）由 `el-upload` 的 `before-upload` 先做同样的类型与大小校验，再经自定义 `http-request` 走带 JWT 的 api 实例上传（超时放宽至 30s），成功后回填 `form.image_url`；**同时保留手填图片地址的输入框**，用于外链图或历史数据订正。
+
+> **与旧上传接口的边界**：C 端公开接口 `POST /upload`（无鉴权、落 `uploads` 根、上限 10MB）保持不动，身份证等小程序端上传仍走它，两者互不影响。
+> **⚠️ 依赖 `IMAGE_BASE_URL`**：该变量为空时会返回相对路径 `/images/car_img/xxx.png`，小程序 `<image>` 无法识别，生产环境必须配置（`.env.example` 已有此项）。图片经 `/images` 静态路由（Express 托管 `uploads`，缓存 1h）对外访问。
 
 #### 既有运营接口
 
@@ -550,6 +588,9 @@ total_price                                     // 保持原价不变，GMV/报�
 
 | 版本 | 日期 | 变更内容 | 备注 |
 |---|---|---|---|
+| v1.7.4 | 2026-10-31 | **建立「可跨账号/跨工具」的 AI 协作契约（项目记忆入库）**：① 新增根目录 `AGENTS.md`——任何时候进入仓库的第一入口，含五条红线（不自动 commit/push、迭代必须同步需求文档与 Change Log、涉 C 端接口联动接口文档、金额以 `pay_amount` 为准、计价唯一真源）、环境速查、目录地图、业务口径、编码约定、12 条已知坑、按任务类型的检查清单；CodeBuddy 在无 `CODEBUDDY.md` 时自动加载，Cursor/Claude Code/Codex 通用；② 新增 `.codebuddy/rules/pangpai-car-core/RULE.mdc`（`alwaysApply`，常驻红线）与 `.codebuddy/rules/pangpai-car-docs/RULE.mdc`（按需，文档收尾工作流）；③ 新增 `docs/ai-context.md`：深度技术上下文（装配顺序、用户链路、计价、下单支付、退款、优惠券、后台层、基础设施、管理前端、脚本/部署/配置、13 条缺陷明细） | **动因**：项目约定此前只挂在 AI 的账号记忆上，用户更换 CodeBuddy 账号后全部丢失（当天就出现了「擅自想 commit、忘记更新需求文档」的情况）。三份文件随仓库走，是唯一可靠载体。**内容均经代码核实**：调研过程中主动否掉了一条错误结论（子代理称「不存在 `@vueuse/core` 依赖」，实为 `admin-web/package-lock.json` 命中 9 处、`node_modules/@vueuse` 实体存在，EBADENGINE 警告属实）；并抽查复核了订单号生成（`genOrderSn` 确为 `'PP'+YYYYMMDDHHmmss`）、本地建表脚本缺券表（`local-dev-init.sql` 中 `pp_coupon` 命中数为 0）、整备费不乘天数三项关键事实。本次仅新增文档与规则文件，**未改动任何业务代码** |
+| v1.7.4 | 2026-10-31 | **后台新增车辆支持图片上传**：① 新增 `src/middlewares/carUpload.js`（multer 实例 + 错误包装中间件）与 `src/controllers/admin/upload.controller.js`，路由 `POST /admin-api/upload/car-image` 挂在 `adminAuth` 之后（需 JWT）；② 落盘 `uploads/car_img`（`UPLOAD_DIR` 子目录，`mkdirSync recursive` 随服务启动自动创建，**部署无需手工建目录**）；③ 限制：仅 jpg/png/webp（MIME 白名单，后缀不信任 `originalname`）、单张 ≤5MB、一次一张，文件名 `car-<时间戳>-<8位随机>.<ext>`；④ 超限 / 格式不符 / 字段名不为 `file` 统一转 HTTP 400 + `{code:400,msg}`——multer 错误不走 Express 异常链，不包装会被全局异常吞成 500；⑤ `Cars.vue` 表单「图片URL」改为「车辆图片」：`el-upload` 选图 + 缩略图预览（可点击放大）+ **保留手填地址输入框**，成功后回填 `image_url` | **边界**：原有的公开 `POST /upload`（无鉴权、落 `uploads` 根、10MB）保持不动，身份证等 C 端上传仍走它，互不影响。实测 4 项全通：正常 PNG 返回 `https://pangpai-car.com/images/car_img/car-20261030185815-2a9e4854.png` 且落盘成功；6MB 文件被拒（「图片大小不能超过 5MB」）；gif 被拒（「仅支持 jpg / png / webp 格式的图片」）；字段名错误被拒（「上传字段名必须为 file」）。并已验证「删掉整个 uploads 后仅做一次 `require('./src/routes')`」即可重建 `uploads` 与 `uploads/car_img`。admin-web 构建通过 |
+| v1.7.4 | 2026-10-31 | **修复后台优惠券时间渲染为 ISO UTC 原始串**：`Coupons.vue` 的「领取时间 / 使用时间」两列、`CouponRecords.vue` 顶部「批次信息」的领取/使用时间，此前直接打印 MySQL `DATETIME` 序列化出来的 ISO UTC 串（如 `2026-10-25T16:00:00.000Z`），运营看不懂；统一接入 `src/utils/format.js` 的 `formatDateTime`（东八区 `YYYY-MM-DD HH:mm:ss`）。**连带修复编辑弹窗回显**：`openForm` 原先把 ISO 串直接赋给 `value-format="YYYY-MM-DD HH:mm:ss"` 的 `el-date-picker`，选择器无法解析（Invalid Date / 显示为空），现回显前同样先格式化 | 属于「既有工具漏用」的补齐——`formatDateTime` 早已用于订单/用户/车辆列表，优惠券这两个页面是 v1.7.3 新增时漏掉的。补齐后**后台所有时间列口径一致**。无 lint 错误，admin-web 构建通过 |
 | v1.7.3 | 2026-10-27 | **优惠券管理新增「领券记录」二级页面**：① 新增 `coupon.model.getUserCouponRecords()`——按批次查 `pp_user_coupon` 并 `LEFT JOIN pp_user` 带出昵称/手机号，支持 `status`（未使用/已使用/已作废）与 `keyword`（券码/手机号/昵称/账号名）筛选，同时返回 `summary`（未使用/已使用/已作废数量 + **已核销金额**，即真实让利额）；② 新增后台接口 `GET /admin-api/coupons/:id/records`（**`:id` 是 `pp_coupon` 数字主键而非批次号**），返回 `{coupon, list, total, summary}`；③ 新增前端页面 `admin-web/src/views/CouponRecords.vue` 与路由 `coupons/:id/records`，批次列表操作列加「领券记录」入口，页面含批次信息、统计卡片、筛选与明细表（券码/领取用户/第几张/面额/状态/领取时间/使用时间/关联订单号/有效期） | 实测 12 项全通：① 端到端 HTTP 验证（临时 Express 挂真实 admin 路由 + JWT）——正常路径、未鉴权 401、批次不存在 404、状态与关键词筛选透传、既有批次列表接口未受影响；② 数据层验证——总数与三状态之和一致（`0+1+0=1`）、券码精确查 1 条、无结果返回 0、不存在的批次返回空且 summary 全 0。**踩坑记录**：批次的数字主键 `id` 与批次号 `coupon_id` 是两个东西，最初把 `:id` 直接当批次号去关联 `pp_user_coupon.coupon_id`，会导致任何批次都查不到记录；已修正为「先查批次取 coupon_id」并写入文档易错点。admin-web 构建通过 |
 | v1.7.3 | 2026-10-27 | **管理后台金额口径补齐 + 修复后台退款按原价退的 bug**：① **修复**：后台「订单退款」弹窗里标着「实付金额」的字段实际取的是 `total_price`（订单原价），且打开时**默认退款金额就填原价**——用券订单点退款会按原价退，被 `refund.service` 拦截而失败（服务端早有 `refundFee > pay_amount` 校验，不会真的多退钱，但功能不可用且文案误导）。现改为默认/上限均取 `pay_amount`，并加提示与前端二次校验；② 订单列表「总价」改名「订单原价」，新增「优惠券 / 优惠金额 / 实付金额」三列，详情页同步补三项；③ 概览「今日概览」拆为「订单原价 GMV / 优惠券抵扣 / 实收金额」，近 7 日表格与合计同步拆三口径（`totalAmount`/`discountAmount`/`paidAmount`）；④ 导出 Excel 新增「优惠金额 / 实付金额 / 优惠券名称 / 优惠券码」；⑤ 后台列表/详情/导出通过 `LEFT JOIN pp_user_coupon` 补齐券名（`pp_order` 只存 `coupon_sn`，此前后台拿不到券名只能显示兜底文案） | 实测：① 概览与近 7 日均返回三口径且「原价−抵扣=实付」成立；② 46 单抽样金额等式全部成立；③ 后台列表能 JOIN 出券名（真实数据样例：`PP20261027001319` → 「新用户立减20」，原价 29 / 抵扣 20 / 实付 9）；④ 模拟后台误传原价 648（实付 598）→ 被拦截并提示「订单实付 ￥598」，按 598 传则通过金额校验进入微信流程。admin-web 构建通过 |
 | v1.7.3 | 2026-10-26 | **Change Log 排序治理**：① 两份文档的 Change Log **统一改为倒序**（最新版本在最上面）——此前是「追加到末尾」的升序写法与「新条目插到最上面」两种方向混用，表格读起来像版本倒着走，前端同学无法判断哪个是最新口径；② 清理接口文档 Change Log 中混进的**多余分隔行**（把表格从中间截成了两截，看起来像两个独立表）；③ 新增 `scripts/sort_changelog.js`（默认降序，`asc` 切回升序），同版本多条原样保持相对顺序，脚本按 semver 比较版本号，同版本的多条保持原有相对顺序，解析不到版本号的行留在末尾，不会丢失 | Change Log 新增条目直接写在表格**首行**，写完跑一次 `sort_changelog.js` 即可；不要再追加到末尾 |
