@@ -31,12 +31,12 @@
         </el-table-column>
         <el-table-column label="领取时间" width="200">
           <template #default="{ row }">
-            <span class="sub-fee">{{ row.receive_start_time }} ~<br />{{ row.receive_end_time }}</span>
+            <span class="sub-fee">{{ formatDateTime(row.receive_start_time) }} ~<br />{{ formatDateTime(row.receive_end_time) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="使用时间" width="200">
           <template #default="{ row }">
-            <span class="sub-fee">{{ row.use_start_time }} ~<br />{{ row.use_end_time }}</span>
+            <span class="sub-fee">{{ formatDateTime(row.use_start_time) }} ~<br />{{ formatDateTime(row.use_end_time) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="scope_text" label="适用范围" width="110" />
@@ -118,6 +118,7 @@
 import { computed, onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '../api';
+import { formatDateTime } from '../utils/format';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
@@ -196,8 +197,8 @@ function openForm(row) {
       bear_type: row.bear_type,
       status: Number(row.status),
     });
-    receiveRange.value = [row.receive_start_time, row.receive_end_time];
-    useRange.value = [row.use_start_time, row.use_end_time];
+    receiveRange.value = [formatDateTime(row.receive_start_time), formatDateTime(row.receive_end_time)];
+    useRange.value = [formatDateTime(row.use_start_time), formatDateTime(row.use_end_time)];
     scopeCarIds.value = row.scope_car_ids ? String(row.scope_car_ids).split(',').map(Number) : [];
   } else {
     Object.assign(form, blankForm());

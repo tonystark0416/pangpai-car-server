@@ -20,10 +20,10 @@
           <el-tag :type="couponStatusType(coupon.status)" size="small">{{ coupon.status_text || '-' }}</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="领取时间">
-          {{ coupon.receive_start_time }} ~ {{ coupon.receive_end_time }}
+          {{ formatDateTime(coupon.receive_start_time) }} ~ {{ formatDateTime(coupon.receive_end_time) }}
         </el-descriptions-item>
         <el-descriptions-item label="使用时间">
-          {{ coupon.use_start_time }} ~ {{ coupon.use_end_time }}
+          {{ formatDateTime(coupon.use_start_time) }} ~ {{ formatDateTime(coupon.use_end_time) }}
         </el-descriptions-item>
         <el-descriptions-item label="库存">
           剩余 {{ coupon.remain_stock }} / 总量 {{ coupon.total_stock }}
