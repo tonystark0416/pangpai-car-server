@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.7.4 ｜ 日期：2026-10-31 ｜ 状态：迭代中
+> 版本：v1.7.6 ｜ 日期：2026-11-01 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -132,6 +132,7 @@ pangpai-car/
     │   ├── pricing.service.js   # 计价唯一真源（含 v1.7.3 券抵扣）
     │   ├── refund.service.js    # 退款编排（按 pay_amount + 退款后退券）
     │   ├── coupon.service.js    # v1.7.3 券可用性判定与抵扣计算
+    │   └── car.service.js       # v1.7.6 车辆轮播图/标签/配置字段归一化
     │   └── wechat/
     │       ├── miniprogram.js   # token / jscode2session / getPhoneNumber / OCR / 小程序码
     │       ├── work.js          # 企业微信通知
@@ -143,7 +144,9 @@ pangpai-car/
 │   └── carUpload.js         # v1.7.4 后台车辆图片上传（uploads/car_img，格式/大小校验 + 错误统一转 JSON）
     ├── utils/
     │   ├── mysql.js             # MySQL 连接封装（含错误容错）
-    │   └── jwt.js               # 后台 token 签发 / 校验
+    │   ├── jwt.js               # 后台 token 签发 / 校验
+    │   ├── validate.js          # 手机号规范化与校验（结算 / 下单共用）
+    │   └── time.js              # 时间格式化（东八区，v1.7.5）
     ├── tasks/
     │   └── refreshAccessToken.js # 定时刷新小程序 / 企微 access_token
     └── data/                    # 支付证书、access_token 缓存（不入库）
@@ -257,6 +260,8 @@ uid 已就绪
   ↓
 /getCarList            车辆列表（仅上架，按 sort）
   ↓
+/getCarInfo?carId=&uid= 车辆详情（v1.7.5：带 uid 时返回券后价，未登录可省略）
+  ↓
 /getCarFee?carId=      该车的整备费 + 两档保险日单价（结算页展示用）
   ↓
 /checkout              结算计价（服务端重算金额，返回 insurance_level）
@@ -292,6 +297,7 @@ uid 已就绪
 | 接口 | 方法 | 说明 |
 |---|---|---|
 | `/getCarList` | GET | 车辆分页列表（每页 10 条，**v1.6.7 起仅返回上架车辆 `status=1`，按 `sort` 升序、同 sort 按 id 倒序**） |
+| `/getCarInfo` | GET | **v1.7.5 新增**：车辆详情。`carId` 必填；**`uid` 选填**——不传也能拿到车辆信息与参考价，**传了才计算券后价**（`pay_amount`）。取还车时间选填，都不传时按**默认 1 天**算参考价；计价一律走 `pricing.service`（唯一真源），券后价只做展示、**不锁定不核销**，实际用券仍由用户在结算页手选。**v1.7.6：车辆对象新增 `images`（轮播图数组）、`tags`（标签数组）、`config`（配置键值对）** |
 | `/checkout` | GET | 结算计价（**v1.6.12：天数按 24h 向上取整且≥1 天；金额服务端重算；校验时间先后与保险/司机白名单**；**v1.7.3：可选 `couponSn` 券码，返回 `discount_price` 优惠额与 `pay_amount` 实付**） |
 | `/getCouponList` | GET | **v1.7.3 新增**：可领取的券批次列表（`uid`），返回面额/库存/限领及当前用户 `my_received`、`can_receive` |
 | `/receiveCoupon` | POST | **v1.7.3 新增**：领券（body `{uid, couponId}`），**原子扣库存 + 限领校验**，成功返回唯一券码 `coupon_sn` |
@@ -517,7 +523,7 @@ total_price                                     // 保持原价不变，GMV/报�
 
 | 表名 | 用途 | 字段 |
 |---|---|---|
-| `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time, **status(上下架：1上架 0下架，v1.6.7)**, **sort(排序值 1~10000 整数，越小越靠前，v1.6.7)** |
+| `pp_car` | 租赁车辆 | id, car_name(50), image_url(200), des(100), day_price, promotion_day_price(结算计价用), create_time, update_time, **status(上下架：1上架 0下架，v1.6.7)**, **sort(排序值 1~10000 整数，越小越靠前，v1.6.7)**, **clean_price/insurance_price_l1/insurance_price_l2(费用配置，v1.6.18)**, **images(JSON 数组：详情页轮播图，最多 8 张，第 1 张为主图，v1.7.6)**, **tags(JSON 数组：车辆标签，最多 6 个，v1.7.6)**, **config(JSON 对象：配置参数键值对，最多 20 项，v1.7.6)** |
 | `pp_order` | 租车订单 | 全部 23 字段均已加中文注释（v1.6.6）：id=订单ID, order_sn=订单号（PP+yyyyMMddHHmmss）, uid=下单用户ID（adp_user.id）, contact_phone=联系电话, car_id=车辆ID（pp_car.id）, rent_day=租车天数（**varchar(5)**）, rent_day_price=车辆日租金单价, rent_total_price=车辆租金合计, server_day_price=保险费单价（每天）, server_total_price=保险费合计, driver_price=司机服务费单价（每天）, driver_total_price=司机服务费合计, **clean_price=整备费快照（v1.6.18 新增，v1.6.19 调整至司机合计之后、总价之前）**, total_price=订单总价（**原价；v1.7.3 起实付另看 pay_amount**）, **coupon_id=优惠券批次号（v1.7.3）**, **coupon_sn=优惠券码（v1.7.3）**, **discount_price=优惠金额（v1.7.3）**, **pay_amount=实付金额=total_price-discount_price（v1.7.3，支付核验与退款以此为准；历史订单已回填为 total_price）**, **pay_status=支付状态 0待支付 1已支付 2已退款 3支付失败（v1.5.0）**, **transaction_id=微信支付单号**, **pay_time=支付时间**, **order_status=履约状态 0待取车 1已取车 2已还车 3已完成 4已取消（v1.5.0）**, create_time=创建时间, update_time=更新时间, pickup_address=取车地址(100), return_address=还车地址(100), pickup_time=取车时间（**varchar(50)，毫秒时间戳字符串**）, return_time=还车时间 |
 | `pp_user` | 庞派用户（v1.6.15 从 `adp_user` 迁出，保留原主键） | id, biz_code(11), username(20), password(255), nickname(50), avatar(255), **phone(20)（v1.7.0 起为账号唯一标识，唯一索引 `uk_phone`）**, create_time, update_time |
 | `pp_user_auth` | 用户授权表（一个小程序一行） | id, user_id(关联 pp_user.id), biz_code(11), app_id(32)（预留）, openid(50), unionid(50)（待开放平台关联后启用）, create_time, update_time；唯一键 `uk_biz_openid(biz_code, openid)`，另有 idx_user / idx_unionid |
@@ -588,6 +594,8 @@ total_price                                     // 保持原价不变，GMV/报�
 
 | 版本 | 日期 | 变更内容 | 备注 |
 |---|---|---|---|
+| v1.7.6 | 2026-11-01 | **车辆详情页数据层（轮播图 / 标签 / 配置参数）**：① `pp_car` 新增三个 JSON 列 —— `images`（轮播图数组，最多 8 张，第 1 张为列表与详情主图）、`tags`（标签数组，最多 6 个，单条 ≤10 字）、`config`（配置参数键值对，最多 20 项），迁移脚本 `scripts/migrate_car_detail_fields.js`（幂等、先建库内备份表、中文注释显式 `SET NAMES utf8mb4`、并把 24 辆存量车的 `image_url` 回填为 `images` 第 1 张）；② 新增 `src/services/car.service.js` 统一做三个字段的**归一化**（后台写入与 C 端读取共用，脏数据/非法 URL/超量/重复全部收敛），C 端 `/getCarList`、`/getCarInfo` 与后台车辆列表均返回归一化结果，`images` 为空时自动回退 `[image_url]`；③ 后台车辆 CRUD 支持这三个字段，**更新采用动态 SET——只更新 payload 里显式传了的字段**（列表页「排序值即时保存」等整行提交不会误清空运营已录入内容）；保存时若传了 `images`，自动把 `image_url` 同步为 `images[0]`；④ `admin-web` 车辆表单新增：多图上传（≤5MB/张，缩略图列表 + 删除 + 「设为主图」）、标签动态添加/删除、配置参数键值对增删 | 面向小程序**车辆详情页**（列表页与结算页之间）。**用户评价本期不做**（库内无评价表，下一版再建 `pp_car_review`）。实测 6 项全通：创建带 2 图/2 标签/2 配置的测试车 → C 端详情正确返回；整行更新（不带这三个字段）后内容**未被清空**；改为 1 标签 + 空配置后正确落库；主图自动同步为 `images[0]`；逗号串与非法 URL 等脏入参被正确过滤；测试车已删除（车辆总数 24→25→24）。admin-web 构建通过 |
+| v1.7.5 | 2026-11-01 | **新增 C 端车辆详情接口 `GET /getCarInfo`**：① 入参 `carId` 必填、**`uid` 选填**（未登录也能看车，传了才附带券后价），另可选 `pickUpTime`/`returnTime`/`insuranceLevel`/`driver_price`；② 返回车辆对象 `data` + 与 `/checkout` 同构的计价明细（`rentDay`、`total_price`、`discount_price`、**`pay_amount`**）+ `best_coupon`/`coupon_count`/`has_coupon`；③ 券后价口径：复用 `coupon.service.pickBestCoupon`（新增）挑出「本次可用且抵扣最多」的一张券（面额相同时优先临期券），**只试算展示、不锁定不核销**，沿用「默认不选券」规则；可用性判定复用 `validateCoupon`，与结算/下单同口径（含「订单金额需大于券面额」门槛）；④ 未传取还车时间时按**默认 1 天**算参考价（详情页通常还没选日期）；⑤ 下架车辆返回 `400 该车辆已下架，暂不可预订`，与 `/createOrder` 一致；⑥ 新增 `src/utils/time.js` 的 `formatDateTime`（东八区 `YYYY-MM-DD HH:mm:ss`），券有效期等时间字段不再吐 ISO UTC 串 | 实测：无 uid 与带 uid 均返回 `code:200`（carId=1 参考价 349 = 199 租金 + 100 保险 + 50 整备，`rentDay=1`）；缺参/车辆不存在/下架分别返回明确 400；计价口径验证 2 天 648、用 20 元券 → 抵扣 20 / 实付 628；券已过期（库内仅有的两张券 10-27 到期）与匿名访问均正确返回 `coupon_count=0`、`best_coupon=null`。**本次为只读实现，未写入任何生产数据**。文档已同步接口文档 §2.2 与两份 Change Log |
 | v1.7.4 | 2026-10-31 | **建立「可跨账号/跨工具」的 AI 协作契约（项目记忆入库）**：① 新增根目录 `AGENTS.md`——任何时候进入仓库的第一入口，含五条红线（不自动 commit/push、迭代必须同步需求文档与 Change Log、涉 C 端接口联动接口文档、金额以 `pay_amount` 为准、计价唯一真源）、环境速查、目录地图、业务口径、编码约定、12 条已知坑、按任务类型的检查清单；CodeBuddy 在无 `CODEBUDDY.md` 时自动加载，Cursor/Claude Code/Codex 通用；② 新增 `.codebuddy/rules/pangpai-car-core/RULE.mdc`（`alwaysApply`，常驻红线）与 `.codebuddy/rules/pangpai-car-docs/RULE.mdc`（按需，文档收尾工作流）；③ 新增 `docs/ai-context.md`：深度技术上下文（装配顺序、用户链路、计价、下单支付、退款、优惠券、后台层、基础设施、管理前端、脚本/部署/配置、13 条缺陷明细） | **动因**：项目约定此前只挂在 AI 的账号记忆上，用户更换 CodeBuddy 账号后全部丢失（当天就出现了「擅自想 commit、忘记更新需求文档」的情况）。三份文件随仓库走，是唯一可靠载体。**内容均经代码核实**：调研过程中主动否掉了一条错误结论（子代理称「不存在 `@vueuse/core` 依赖」，实为 `admin-web/package-lock.json` 命中 9 处、`node_modules/@vueuse` 实体存在，EBADENGINE 警告属实）；并抽查复核了订单号生成（`genOrderSn` 确为 `'PP'+YYYYMMDDHHmmss`）、本地建表脚本缺券表（`local-dev-init.sql` 中 `pp_coupon` 命中数为 0）、整备费不乘天数三项关键事实。本次仅新增文档与规则文件，**未改动任何业务代码** |
 | v1.7.4 | 2026-10-31 | **后台新增车辆支持图片上传**：① 新增 `src/middlewares/carUpload.js`（multer 实例 + 错误包装中间件）与 `src/controllers/admin/upload.controller.js`，路由 `POST /admin-api/upload/car-image` 挂在 `adminAuth` 之后（需 JWT）；② 落盘 `uploads/car_img`（`UPLOAD_DIR` 子目录，`mkdirSync recursive` 随服务启动自动创建，**部署无需手工建目录**）；③ 限制：仅 jpg/png/webp（MIME 白名单，后缀不信任 `originalname`）、单张 ≤5MB、一次一张，文件名 `car-<时间戳>-<8位随机>.<ext>`；④ 超限 / 格式不符 / 字段名不为 `file` 统一转 HTTP 400 + `{code:400,msg}`——multer 错误不走 Express 异常链，不包装会被全局异常吞成 500；⑤ `Cars.vue` 表单「图片URL」改为「车辆图片」：`el-upload` 选图 + 缩略图预览（可点击放大）+ **保留手填地址输入框**，成功后回填 `image_url` | **边界**：原有的公开 `POST /upload`（无鉴权、落 `uploads` 根、10MB）保持不动，身份证等 C 端上传仍走它，互不影响。实测 4 项全通：正常 PNG 返回 `https://pangpai-car.com/images/car_img/car-20261030185815-2a9e4854.png` 且落盘成功；6MB 文件被拒（「图片大小不能超过 5MB」）；gif 被拒（「仅支持 jpg / png / webp 格式的图片」）；字段名错误被拒（「上传字段名必须为 file」）。并已验证「删掉整个 uploads 后仅做一次 `require('./src/routes')`」即可重建 `uploads` 与 `uploads/car_img`。admin-web 构建通过 |
 | v1.7.4 | 2026-10-31 | **修复后台优惠券时间渲染为 ISO UTC 原始串**：`Coupons.vue` 的「领取时间 / 使用时间」两列、`CouponRecords.vue` 顶部「批次信息」的领取/使用时间，此前直接打印 MySQL `DATETIME` 序列化出来的 ISO UTC 串（如 `2026-10-25T16:00:00.000Z`），运营看不懂；统一接入 `src/utils/format.js` 的 `formatDateTime`（东八区 `YYYY-MM-DD HH:mm:ss`）。**连带修复编辑弹窗回显**：`openForm` 原先把 ISO 串直接赋给 `value-format="YYYY-MM-DD HH:mm:ss"` 的 `el-date-picker`，选择器无法解析（Invalid Date / 显示为空），现回显前同样先格式化 | 属于「既有工具漏用」的补齐——`formatDateTime` 早已用于订单/用户/车辆列表，优惠券这两个页面是 v1.7.3 新增时漏掉的。补齐后**后台所有时间列口径一致**。无 lint 错误，admin-web 构建通过 |

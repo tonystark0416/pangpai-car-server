@@ -7,7 +7,7 @@
 > - 文档维护约定：**任何涉及小程序端接口的改动，都必须同步更新本文件后再交付前端**（版本记录见文末 Change Log）
 > - **交付约定：改动涉及本文件所列接口时，必须向项目负责人明确报告「入参/出参是否有变动」，若前端需因此改代码（新增返回字段、新增错误码、字段类型/单位变化等）必须单独提醒其更新小程序**
 >
-> 适用版本：后端 **v1.7.3** ｜ 更新日期：2026-10-25
+> 适用版本：后端 **v1.7.6** ｜ 更新日期：2026-11-01
 
 ---
 
@@ -39,7 +39,7 @@
   - [1.6 提交 / 更新驾驶证信息](#16-提交--更新驾驶证信息)
 - [2. 车辆](#2-车辆)
   - [2.1 车辆列表（分页）](#21-车辆列表分页)
-  - [2.2 车辆详情](#22-车辆详情)
+  - [2.2 车辆详情（v1.7.5 新增）](#22-车辆详情v175-新增)
 - [3. 结算计价](#3-结算计价)
   - [3.1 结算计价（提交订单前调用）](#31-结算计价提交订单前调用)
   - [3.2 保险价格档位](#32-保险价格档位)
@@ -132,7 +132,7 @@
 **D. 登录后的业务调用顺序**
 
 ```
-/getCarList → /getCarFee?carId= → /checkout → /createOrder(checkOutArray 整包)
+/getCarList → /getCarInfo?carId=&uid=（详情页，v1.7.5） → /getCarFee?carId= → /checkout → /createOrder(checkOutArray 整包)
      → /getWxPay → wx.requestPayment → /getOrderList、/getOrderDetail
      → 需要取消时：未支付 /cancelOrder，已支付未取车 /cancelRefund
 ```
@@ -233,12 +233,26 @@ async onGetPhone(e) {
 | 方法 / 路径 | `GET /getCarList` |
 | 参数 | `pageNum`（必填，页码，**从 1 开始**；传 0 或空返回 `400 参数错误`） |
 | 成功 | `{code:0, list:[ {...车辆对象}, ... ]}`，每页 10 条 |
-| 车辆对象字段 | `id`、`car_name`、`image_url`、`des`、`day_price`、`promotion_day_price`（**结算用此价**）、`create_time`、`update_time`、`status`（1 上架 / 0 下架，v1.6.7 新增）、`sort`（1~10000，越小越靠前，v1.6.7 新增） |
+| 车辆对象字段 | `id`、`car_name`、`image_url`、`des`、`day_price`、`promotion_day_price`（**结算用此价**）、`create_time`、`update_time`、`status`（1 上架 / 0 下架，v1.6.7 新增）、`sort`（1~10000，越小越靠前，v1.6.7 新增）、**`images`（轮播图数组，v1.7.6）**、**`tags`（标签数组，v1.7.6）**、**`config`（配置对象，v1.7.6）** |
 | 备注 | **v1.6.7 起：① 只返回上架车辆；② 后端已按 `sort` 升序排好序，前端不要二次排序** |
+| **v1.7.6 新增字段** | `images: string[]`（最多 8 张，**`images[0]` 即主图**，列表卡片可直接用它；`image_url` 与它一致，二者任选其一即可）、`tags: string[]`（最多 6 个）、`config: object`（键值对，如 `{"座位":"5座","排量":"2.0T"}`）。**三个字段恒为数组/对象，不会是 null 或字符串**，可直接 `images.map()` / `v-for` |
 
-### 2.2 车辆详情
+### 2.2 车辆详情（v1.7.5 新增）
 
-> 目前**没有独立的车辆详情接口**，结算接口 `/checkout` 的返回里包含完整车辆对象（`result.data`），详情页可复用该字段，或用列表数据本地缓存。
+| 项 | 内容 |
+|---|---|
+| 方法 / 路径 | `GET /getCarInfo` |
+| 参数 | `carId`（**必填**）；**`uid`（选填）**；`pickUpTime` / `returnTime`（选填，毫秒时间戳）；`insuranceLevel`（选填 `l1`/`l2`，缺省 `l1`）；`driver_price`（选填，`0`/`400`，缺省 `0`） |
+| 成功 | `{code:200, data:{车辆对象}, rentDay, total_price, discount_price, pay_amount, rent_day_price, rent_total_price, clean_price, insurance_level, server_day_price, server_total_price, driver_price, driver_total_price, pickUpTime, returnTime, best_coupon, coupon_count, has_coupon}` |
+| 失败 | `{code:400,msg:'缺少参数：carId'}` / `{'车辆不存在'}` / `{'该车辆已下架，暂不可预订'}` / 计价类错误（如 `{'还车时间必须晚于取车时间'}`） |
+| **车辆对象字段** | 与 `/getCarList` 一致：`id`、`car_name`、`image_url`、`des`、`day_price`、`promotion_day_price`、`clean_price`、`insurance_price_l1/l2`、`status`、`sort`、`create_time`、`update_time`、**`images`（轮播图数组）**、**`tags`（标签数组）**、**`config`（配置对象）** |
+| **详情页渲染建议（v1.7.6）** | **`images`** → 轮播图（`swiper`，空时至少 1 张主图兜底）；**`tags`** → 车名下方标签行；**`config`** → 「车辆配置」表格，按 `Object.entries(config)` 顺序渲染「名称 / 值」两列；`des` → 一句话卖点。**用户评价本期不提供**（库内暂无评价表，下一版再说，前端可先不接该区块或做占位） |
+| **金额口径** | `total_price` = 原价；`discount_price` = 券抵扣（无券 `0`）；**`pay_amount` = 券后价**（无券时等于 `total_price`）。支付与展示一律用 `pay_amount` |
+| **`uid` 传与不传的区别** | **不传** = 匿名浏览，只给车辆信息与参考价，`best_coupon=null`、`coupon_count=0`；**传了**才会查该用户券包，挑出本次可用且抵扣最多的一张券并算出券后价。未登录时不要传 |
+| **`best_coupon`** | `{coupon_sn, coupon_id, name, amount, use_end_time}`，无可用券时为 `null`。`coupon_count` 是这辆车可用券的**张数**（可用于「你有 N 张券可用」文案） |
+| **⚠️ 券后价只是展示价** | 本接口**不会替用户锁定或核销券**，也不改变「默认不选券」的规则。真正用券仍要在结算页由用户手选 `coupon_sn` 传给 `/checkout` 与 `/createOrder` |
+| **取还车时间** | 都不传时后端按**默认 1 天**算参考价（详情页通常还没选日期）；两个都传则按实际时段算。只传了 `pickUpTime` 时按「取车时间 + 1 天」算 |
+| **下架车** | `status≠1` 返回 `400 {'该车辆已下架，暂不可预订'}`，前端不必再展示该车 |
 
 ---
 
@@ -484,6 +498,10 @@ async onGetPhone(e) {
 
 | 版本 | 日期 | 涉及接口 | 变更内容 | 前端是否需改 |
 |---|---|---|---|---|
+| v1.7.6 | 2026-11-01 | `GET /getCarList`、`GET /getCarInfo` | **车辆对象新增详情页三字段**：`images`（轮播图 URL 数组，最多 8 张，**`images[0]` 是主图**）、`tags`（标签数组，最多 6 个）、`config`（配置键值对对象，如 `{"座位":"5座","排量":"2.0T"}`）。三个字段**恒为数组/对象**（不会是 `null`、也不会是字符串），可直接渲染 | **需要**：详情页用 `images` 做轮播、`tags` 做标签行、`config` 渲染配置表。**用户评价本期无数据**，前端先不要接评价区块 |
+| v1.7.6 | 2026-11-01 | 后台车辆录入 | 车辆管理新增「轮播图（多图，≤5MB/张，可设主图）」「标签（动态增删）」「配置参数（键值对增删）」三组录入项；**轮播图第 1 张自动同步为主图** | 否（运营侧操作）。**运营需先补录标签与配置，否则详情页这两块为空** |
+| v1.7.5 | 2026-11-01 | `GET /getCarInfo`（**新接口**） | **车辆详情**：`carId` 必填、**`uid` 选填**（未登录可不传，传了才带券后价），另可选 `pickUpTime`/`returnTime`/`insuranceLevel`/`driver_price`。返回 `data`（车辆对象）+ 计价明细（`rentDay`/`total_price`/`discount_price`/**`pay_amount`**）+ `best_coupon`（本次最优可用券，无券为 `null`）+ `coupon_count`（可用券张数）+ `has_coupon`。未传取还车时间时按**默认 1 天**算参考价 | **需要**：详情页改调本接口，别再复用列表缓存或 `/checkout` 的 `data` 拼装；展示价用 `pay_amount`（无券时等于 `total_price`）；已登录时把 `uid` 带上才会出现券后价 |
+| v1.7.5 | 2026-11-01 | 券后价口径 | **券后价只用于展示，不锁定不自动核销**：`best_coupon` 是服务端挑出的「抵扣最多」的一张券（面额相同优先临期），实际用券仍需用户在结算页手选 `coupon_sn` 传给 `/checkout`/`/createOrder`（**默认不选券的规则不变**）。券不可用（已用/作废/过期/不适用该车/**订单金额 ≤ 券面额**）时不计入 | **需要**：详情页可展示「用券后 ¥xxx」与「你有 N 张券可用」，但**不要**把 `best_coupon.coupon_sn` 直接当作用户已选券自动带进结算 |
 | v1.7.3 | 2026-10-26 | `POST /createOrder` | **`contact_phone` 改为必填且强校验**：没填手机号直接 `400` 拒绝提交订单。未填/空/`"undefined"`/`"null"` → `{"msg":"请填写联系人手机号"}`；位数不对或号段非法 → `{"msg":"联系人手机号格式不正确，请填写 11 位手机号"}`（正则 `^1[3-9]\d{9}$`）。入参会先规范化（去空格/连字符/`+86` 前缀）再落库 | **需要**：① 提交订单前先做本地校验并给出明确提示（如「请填写联系人手机号」），别让用户被后端 `400` 拦下；② 结算页确保该字段有值再整包回传，**不要再传空值或 `"undefined"`**（历史 45 单中 35 单就是这么空的）。`/checkout` 不强校验，只做规范化 |
 | v1.7.3 | 2026-10-25 | `GET /getUserCoupons` | **结算页可用券列表**：新增可选参数 **`amount`**（本次订单原价，取不带券调 `/checkout` 的 `total_price`）。传了即启用金额门槛，并新增返回字段 **`unusable_reason`**（不可选原因文案，可直接展示给用户） | **需要**：结算页必须传 `amount`，用 `usable`/`unusable_reason` 置灰并提示；券包浏览页可不传 |
 | v1.7.3 | 2026-10-25 | 优惠券使用策略 | **默认不使用任何券**（不传券码就不抵扣，服务端不会自动帮用户挑券），**必须由用户在结算页手动选择**；**订单金额 ≤ 券面额时该券不可用**（置灰，`/checkout`、`/createOrder` 均返回 `400 订单金额需大于优惠券面额`） | **需要**：结算页默认不选券、不要自动勾选最大面额券；选券 UI 需消费 `usable`/`unusable_reason` |

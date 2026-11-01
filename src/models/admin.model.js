@@ -125,11 +125,24 @@ async function getCarList({ page = 1, pageSize = 10, keyword = '', status }) {
   }
 }
 
-async function createCar({ car_name, image_url, des, day_price, promotion_day_price, status, sort, clean_price, insurance_price_l1, insurance_price_l2 }) {
+/**
+ * v1.7.6：详情页三个 JSON 列（images / tags / config）统一转 JSON 字符串
+ * 空数组 / 空对象 / 空串一律存 NULL，避免库里出现 `[]` 与 NULL 两种「空」
+ */
+function jsonValue(v) {
+  if (v === undefined || v === null || v === '') return null;
+  if (Array.isArray(v)) return v.length ? JSON.stringify(v) : null;
+  if (typeof v === 'object') return Object.keys(v).length ? JSON.stringify(v) : null;
+  return null;
+}
+
+async function createCar({ car_name, image_url, des, day_price, promotion_day_price, status, sort, clean_price, insurance_price_l1, insurance_price_l2, images, tags, config }) {
   const db = new MySQL();
   try {
     const res = await db.query(
-      'INSERT INTO pp_car (car_name, image_url, des, day_price, promotion_day_price, status, sort, clean_price, insurance_price_l1, insurance_price_l2) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      `INSERT INTO pp_car (car_name, image_url, des, day_price, promotion_day_price, status, sort,
+        clean_price, insurance_price_l1, insurance_price_l2, images, tags, config)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         car_name,
         image_url,
@@ -142,6 +155,10 @@ async function createCar({ car_name, image_url, des, day_price, promotion_day_pr
         feeValue(clean_price, 50),
         feeValue(insurance_price_l1, 100),
         feeValue(insurance_price_l2, 200),
+        // v1.7.6：详情页字段
+        jsonValue(images),
+        jsonValue(tags),
+        jsonValue(config),
       ]
     );
     return res.insertId;
@@ -150,7 +167,19 @@ async function createCar({ car_name, image_url, des, day_price, promotion_day_pr
   }
 }
 
-async function updateCar(id, { car_name, image_url, des, day_price, promotion_day_price, status, sort, clean_price, insurance_price_l1, insurance_price_l2 }) {
+async function updateCar(id, car = {}) {
+  const {
+    car_name,
+    image_url,
+    des,
+    day_price,
+    promotion_day_price,
+    status,
+    sort,
+    clean_price,
+    insurance_price_l1,
+    insurance_price_l2,
+  } = car;
   const db = new MySQL();
   try {
     const res = await db.query(
@@ -169,6 +198,22 @@ async function updateCar(id, { car_name, image_url, des, day_price, promotion_da
         id,
       ]
     );
+
+    // v1.7.6：详情页三个 JSON 列**动态更新**——只更新 payload 里显式传了的字段。
+    // 原因：列表页「排序值即时保存」等整行提交场景不会带这三个字段，
+    // 若一并 SET 会把运营已录入的轮播图/标签/配置清空。
+    const sets = [];
+    const vals = [];
+    ['images', 'tags', 'config'].forEach((f) => {
+      if (Object.prototype.hasOwnProperty.call(car, f)) {
+        sets.push(`${f} = ?`);
+        vals.push(jsonValue(car[f]));
+      }
+    });
+    if (sets.length) {
+      await db.query(`UPDATE pp_car SET ${sets.join(', ')} WHERE id = ?`, [...vals, id]);
+    }
+
     return res.affectedRows;
   } finally {
     db.close();

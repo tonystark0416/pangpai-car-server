@@ -73,19 +73,50 @@
         </el-form-item>
         <el-form-item label="车辆图片" required>
           <div class="upload-row">
-            <el-upload :show-file-list="false" :http-request="uploadImage" :before-upload="beforeUpload"
+            <el-upload :show-file-list="false" multiple :http-request="uploadImage" :before-upload="beforeUpload"
               accept="image/jpeg,image/png,image/webp">
               <el-button type="primary" :loading="uploading">选择图片上传</el-button>
             </el-upload>
-            <el-image v-if="form.image_url" :src="previewUrl" :preview-src-list="[previewUrl]" preview-teleported
-              fit="cover" class="thumb" />
-            <span v-else class="sub-fee">暂无图片</span>
+            <span class="sub-fee">支持 jpg / png / webp，单张 ≤ 5MB，最多 8 张</span>
           </div>
-          <div class="tip">支持 jpg / png / webp，单张 ≤ 5MB；上传后自动填入下方地址</div>
-          <el-input v-model="form.image_url" placeholder="也可直接填写图片地址" clearable />
+          <!-- v1.7.6：轮播图列表，第 1 张为主图（列表页与详情页封面都取它） -->
+          <div v-if="form.images.length" class="img-list">
+            <div v-for="(url, i) in form.images" :key="url + i" class="img-item">
+              <el-image :src="url" :preview-src-list="form.images" preview-teleported fit="cover" class="thumb" />
+              <div class="img-mask">
+                <el-button link type="primary" size="small" @click="setMainImage(i)">设为主图</el-button>
+                <el-button link type="danger" size="small" @click="removeImage(i)">删除</el-button>
+              </div>
+              <div v-if="i === 0" class="main-badge">主图</div>
+            </div>
+          </div>
+          <div v-else class="sub-fee">暂无图片（可上传，也可在下方直接填写地址）</div>
+          <el-input v-model="form.image_url" placeholder="主图地址：上传后自动同步为轮播第 1 张" clearable />
+        </el-form-item>
+        <el-form-item label="车辆标签">
+          <div class="tag-row">
+            <el-tag v-for="(t, i) in form.tags" :key="t" closable size="small" @close="removeTag(i)">{{ t }}</el-tag>
+            <el-input v-model="tagInput" size="small" placeholder="输入后回车添加" style="width: 140px"
+              :maxlength="10" @keyup.enter="addTag" @blur="addTag" />
+          </div>
+          <div class="tip">最多 6 个，单个 ≤ 10 字；展示在详情页车辆名称下方（如 自动挡 / 5座 / 豪华型）</div>
+        </el-form-item>
+        <el-form-item label="配置参数">
+          <div class="config-list">
+            <div v-for="(item, i) in configList" :key="i" class="config-row">
+              <el-input v-model="item.key" placeholder="名称，如 座位" size="small" maxlength="20"
+                style="width: 140px" />
+              <el-input v-model="item.value" placeholder="值，如 5座" size="small" maxlength="50"
+                style="width: 180px" />
+              <el-button link type="danger" size="small" @click="removeConfig(i)">删除</el-button>
+            </div>
+          </div>
+          <el-button link type="primary" size="small" @click="addConfig">+ 添加配置项</el-button>
+          <div class="tip">最多 20 项，按添加顺序展示在详情页「车辆配置」区</div>
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.des" maxlength="100" />
+          <div class="tip">一句话卖点，展示在详情页标签下方</div>
         </el-form-item>
         <el-form-item label="日租金" required>
           <el-input-number v-model="form.day_price" :min="0" :precision="2" :step="10" style="width: 100%" />
@@ -126,7 +157,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import api from '../api';
 import { formatDateTime } from '../utils/format';
@@ -151,7 +182,18 @@ const form = reactive({
   insurance_price_l2: 200,
   sort: 100,
   status: 1,
+  // v1.7.6：详情页字段（images 第 1 张即主图，与 image_url 保持一致）
+  images: [],
+  tags: [],
 });
+
+/** 标签输入框（回车或失焦即添加） */
+const tagInput = ref('');
+/** 配置参数用数组驱动表单行，保存时再转成对象（对象无法保证 v-for 顺序与可编辑性） */
+const configList = ref([]);
+const MAX_IMAGES = 8;
+const MAX_TAGS = 6;
+const MAX_CONFIG = 20;
 
 /** 费用字段的默认值（新增车辆 / 老数据缺失时兜底） */
 const DEFAULT_FEE = { clean_price: 50, insurance_price_l1: 100, insurance_price_l2: 200 };
@@ -159,7 +201,6 @@ const DEFAULT_FEE = { clean_price: 50, insurance_price_l1: 100, insurance_price_
 /** 车辆图片上传限制：与后端 src/middlewares/carUpload.js 保持一致 */
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const IMAGE_MAX_SIZE = 5 * 1024 * 1024;
-const previewUrl = computed(() => form.image_url);
 
 function beforeUpload(file) {
   if (!IMAGE_TYPES.includes(file.type)) {
@@ -173,20 +214,84 @@ function beforeUpload(file) {
   return true;
 }
 
-/** 自定义上传：走统一 api 实例以带上 JWT，成功回填 form.image_url */
+/**
+ * 自定义上传：走统一 api 实例以带上 JWT
+ * v1.7.6：支持多张——每张成功后追加进 form.images，并把第 1 张同步为 image_url（主图）
+ */
 async function uploadImage({ file }) {
   const formData = new FormData();
   formData.append('file', file);
   uploading.value = true;
   try {
     const data = await api.post('/upload/car-image', formData, { timeout: 30000 });
-    form.image_url = data.url;
+    if (form.images.length >= MAX_IMAGES) {
+      ElMessage.warning(`最多上传 ${MAX_IMAGES} 张轮播图`);
+      return;
+    }
+    form.images.push(data.url);
+    form.image_url = form.images[0];
     ElMessage.success('图片上传成功');
   } catch (e) {
     /* 失败提示由 api 拦截器统一处理 */
   } finally {
     uploading.value = false;
   }
+}
+
+/** 删除轮播图；删空后主图地址保留（后端要求 image_url 必填） */
+function removeImage(index) {
+  form.images.splice(index, 1);
+  form.image_url = form.images[0] || form.image_url;
+}
+
+/** 设为首图：挪到数组第 1 位 */
+function setMainImage(index) {
+  if (index === 0) return;
+  const [url] = form.images.splice(index, 1);
+  form.images.unshift(url);
+  form.image_url = url;
+}
+
+function addTag() {
+  const v = String(tagInput.value || '').trim();
+  tagInput.value = '';
+  if (!v) return;
+  if (form.tags.includes(v)) {
+    ElMessage.warning('标签重复');
+    return;
+  }
+  if (form.tags.length >= MAX_TAGS) {
+    ElMessage.warning(`最多 ${MAX_TAGS} 个标签`);
+    return;
+  }
+  form.tags.push(v.slice(0, 10));
+}
+
+function removeTag(index) {
+  form.tags.splice(index, 1);
+}
+
+function addConfig() {
+  if (configList.value.length >= MAX_CONFIG) {
+    ElMessage.warning(`最多 ${MAX_CONFIG} 项配置`);
+    return;
+  }
+  configList.value.push({ key: '', value: '' });
+}
+
+function removeConfig(index) {
+  configList.value.splice(index, 1);
+}
+
+/** 配置行 → 对象（过滤空行，保持添加顺序） */
+function buildConfig() {
+  const out = {};
+  configList.value.forEach(({ key, value }) => {
+    const k = String(key || '').trim();
+    const v = String(value || '').trim();
+    if (k && v) out[k] = v;
+  });
+  return out;
 }
 
 async function load() {
@@ -215,7 +320,12 @@ function openForm(row) {
       insurance_price_l2: row.insurance_price_l2 !== undefined && row.insurance_price_l2 !== null ? Number(row.insurance_price_l2) : DEFAULT_FEE.insurance_price_l2,
       sort: Number(row.sort) || 100,
       status: Number(row.status),
+      // v1.7.6：轮播图为空时回退为单张主图，保证编辑后不会「图越改越少」
+      images: Array.isArray(row.images) ? [...row.images] : row.image_url ? [row.image_url] : [],
+      tags: Array.isArray(row.tags) ? [...row.tags] : [],
     });
+    configList.value = Object.entries(row.config || {}).map(([key, value]) => ({ key, value: String(value) }));
+    tagInput.value = '';
   } else {
     Object.assign(form, {
       id: null,
@@ -229,7 +339,11 @@ function openForm(row) {
       insurance_price_l2: DEFAULT_FEE.insurance_price_l2,
       sort: 100,
       status: 1,
+      images: [],
+      tags: [],
     });
+    configList.value = [];
+    tagInput.value = '';
   }
   formVisible.value = true;
 }
@@ -276,10 +390,12 @@ async function save() {
   }
   saving.value = true;
   try {
+    // v1.7.6：config 由行数组转成对象后再提交；images/tags 直接随表单走
+    const payload = { ...form, config: buildConfig() };
     if (form.id) {
-      await api.put(`/cars/${form.id}`, form);
+      await api.put(`/cars/${form.id}`, payload);
     } else {
-      await api.post('/cars', form);
+      await api.post('/cars', payload);
     }
     ElMessage.success('保存成功');
     formVisible.value = false;
@@ -327,6 +443,49 @@ onMounted(load);
 .promo {
   color: #f56c6c;
   font-weight: 600;
+}
+/* v1.7.6：轮播图列表 */
+.img-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+}
+.img-item {
+  position: relative;
+  width: 120px;
+}
+.img-mask {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+.main-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  padding: 0 6px;
+  font-size: 12px;
+  color: #fff;
+  background: rgba(64, 158, 255, 0.9);
+  border-radius: 3px;
+}
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .tip {
   margin-top: 4px;

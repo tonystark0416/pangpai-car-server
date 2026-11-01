@@ -2,11 +2,37 @@
  * 管理后台：车辆管理
  */
 const adminModel = require('../../models/admin.model');
+const carService = require('../../services/car.service');
 
 async function list(req, res) {
   const { page, pageSize, keyword, status } = req.query;
   const data = await adminModel.getCarList({ page, pageSize, keyword, status });
+  // v1.7.6：列表也返回归一化后的轮播图/标签/配置，避免前端拿到 null 还要自己兜底
+  data.list = (data.list || []).map(carService.decorateCar);
   res.json({ code: 0, data });
+}
+
+/**
+ * v1.7.6：归一化详情页三个字段
+ * 只对**显式传入**的字段做处理（保持与 model 层「动态更新」一致的语义）
+ */
+function normalizeDetail(car) {
+  const out = { ...car };
+  if (Object.prototype.hasOwnProperty.call(car, 'images')) {
+    out.images = carService.normalizeImages(car.images);
+  }
+  if (Object.prototype.hasOwnProperty.call(car, 'tags')) {
+    out.tags = carService.normalizeTags(car.tags);
+  }
+  if (Object.prototype.hasOwnProperty.call(car, 'config')) {
+    out.config = carService.normalizeConfig(car.config);
+  }
+  // 约定：**轮播图第 1 张即列表与详情的主图**，自动同步给 image_url，
+  // 避免运营换了首图但列表页还是旧图
+  if (Array.isArray(out.images) && out.images.length) {
+    out.image_url = out.images[0];
+  }
+  return out;
 }
 
 function validate(car) {
@@ -37,7 +63,7 @@ function validate(car) {
 }
 
 async function create(req, res) {
-  const car = req.body || {};
+  const car = normalizeDetail(req.body || {});
   const err = validate(car);
   if (err) {
     return res.json({ code: 400, msg: err });
@@ -47,7 +73,7 @@ async function create(req, res) {
 }
 
 async function update(req, res) {
-  const car = req.body || {};
+  const car = normalizeDetail(req.body || {});
   const err = validate(car);
   if (err) {
     return res.json({ code: 400, msg: err });
