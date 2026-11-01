@@ -23,6 +23,139 @@ const USER_COUPON_STATUS = { UNUSED: 0, USED: 1, INVALID: 2 };
 const COUPON_STATUS_TEXT = { 0: '未开始', 1: '活动中', 2: '已废弃' };
 const USER_COUPON_STATUS_TEXT = { 0: '未使用', 1: '已使用', 2: '已作废' };
 
+/**
+ * v1.7.7：派生状态（**只读计算，不落库**）
+ *
+ * 背景：`pp_coupon.status` 只有 0未开始/1活动中/2已废弃，`pp_user_coupon.status` 只有
+ * 0未使用/1已使用/2已作废，**都没有「已过期」**。但「过期」是时间的函数、不是一个动作：
+ *   - 存进 status 就要靠定时任务翻转，任务挂了数据就错位；
+ *   - 「已过期」与「已使用/已作废」是**正交**的，写进同一字段会丢信息——
+ *     一张券过期后到底是「过期未用」还是「运营手动作废」，财务复盘时区分不了。
+ *
+ * 因此：库里的 `status` 保持原样，另派生一个 `state`（用户券）/ `runtime_status`（批次）
+ * 供展示与筛选使用。判断时间一律以服务端当前时间为准。
+ */
+
+/** 用户券派生状态（生命周期视角，区别于「本次可用性」usable） */
+const USER_COUPON_STATE = {
+  USABLE: 'usable',
+  NOT_START: 'not_start',
+  EXPIRED: 'expired',
+  USED: 'used',
+  INVALID: 'invalid',
+};
+const USER_COUPON_STATE_TEXT = {
+  usable: '可用',
+  not_start: '未生效',
+  expired: '已过期',
+  used: '已使用',
+  invalid: '已作废',
+};
+/** 排序权重：可用在前、临期紧随，过期与终态靠后（用于券包排序） */
+const USER_COUPON_STATE_ORDER = { usable: 0, not_start: 1, expired: 2, used: 3, invalid: 4 };
+
+/** 批次派生状态：把「过了领取期但仍可用」与「使用期也过了」区分开 */
+const COUPON_RUNTIME_STATUS = {
+  NOT_START: 'not_start',
+  ACTIVE: 'active',
+  CLAIM_ENDED: 'claim_ended',
+  ENDED: 'ended',
+  DISCARDED: 'discarded',
+};
+const COUPON_RUNTIME_STATUS_TEXT = {
+  not_start: '未开始',
+  active: '活动中',
+  claim_ended: '已停止领取',
+  ended: '已结束',
+  discarded: '已废弃',
+};
+
+/**
+ * 派生用户券状态
+ * @param {object} row pp_user_coupon 行（至少含 status / use_start_time / use_end_time）
+ * @param {number} [now] 当前时间戳，便于测试
+ * @returns {string} USER_COUPON_STATE 之一
+ */
+function deriveUserCouponState(row, now = Date.now()) {
+  if (!row) return USER_COUPON_STATE.INVALID;
+  const s = Number(row.status);
+  if (s === USER_COUPON_STATUS.USED) return USER_COUPON_STATE.USED;
+  if (s === USER_COUPON_STATUS.INVALID) return USER_COUPON_STATE.INVALID;
+  if (row.use_start_time && new Date(row.use_start_time).getTime() > now) return USER_COUPON_STATE.NOT_START;
+  if (row.use_end_time && new Date(row.use_end_time).getTime() < now) return USER_COUPON_STATE.EXPIRED;
+  return USER_COUPON_STATE.USABLE;
+}
+
+/**
+ * 派生批次状态
+ * @param {object} row pp_coupon 行
+ * @param {number} [now]
+ * @returns {string} COUPON_RUNTIME_STATUS 之一
+ */
+function deriveCouponRuntimeStatus(row, now = Date.now()) {
+  if (!row) return COUPON_RUNTIME_STATUS.DISCARDED;
+  const s = Number(row.status);
+  if (s === COUPON_STATUS.DISCARDED) return COUPON_RUNTIME_STATUS.DISCARDED;
+  if (s === COUPON_STATUS.NOT_START) return COUPON_RUNTIME_STATUS.NOT_START;
+  // status = 1 活动时，按两个时间窗口细分
+  const start = row.receive_start_time ? new Date(row.receive_start_time).getTime() : 0;
+  const claimEnd = row.receive_end_time ? new Date(row.receive_end_time).getTime() : 0;
+  const useEnd = row.use_end_time ? new Date(row.use_end_time).getTime() : 0;
+  if (useEnd && now > useEnd) return COUPON_RUNTIME_STATUS.ENDED; // 使用期已过 = 真正结束
+  if (claimEnd && now > claimEnd) return COUPON_RUNTIME_STATUS.CLAIM_ENDED; // 领完了但还能用
+  if (start && now < start) return COUPON_RUNTIME_STATUS.NOT_START;
+  return COUPON_RUNTIME_STATUS.ACTIVE;
+}
+
+/**
+ * 虚拟状态筛选值 → SQL 条件（不落库也能筛「已过期」）
+ * 用户券：usable / not_start / expired / used / invalid，以及原数字 0/1/2
+ */
+const USER_COUPON_STATE_SQL = {
+  usable: 'u.status = 0 AND NOW() BETWEEN u.use_start_time AND u.use_end_time',
+  not_start: 'u.status = 0 AND u.use_start_time > NOW()',
+  expired: 'u.status = 0 AND u.use_end_time < NOW()',
+  used: 'u.status = 1',
+  invalid: 'u.status = 2',
+};
+/** 批次：not_start / active / claim_ended / ended / discarded，以及原数字 0/1/2 */
+const COUPON_RUNTIME_SQL = {
+  not_start: '(status = 0 OR (status = 1 AND NOW() < receive_start_time))',
+  active: '(status = 1 AND NOW() BETWEEN receive_start_time AND receive_end_time AND NOW() <= use_end_time)',
+  claim_ended: '(status = 1 AND NOW() > receive_end_time AND NOW() <= use_end_time)',
+  ended: '(status = 1 AND NOW() > use_end_time)',
+  discarded: '(status = 2)',
+};
+
+/**
+ * 构造用户券状态筛选条件（兼容数字与虚拟值，未识别的值直接忽略）
+ * @returns {{sql:string, params:Array}|null} null 表示不筛选
+ */
+function buildUserCouponStatusFilter(status, alias = 'u') {
+  if (status === undefined || status === null || status === '') return null;
+  const a = alias.endsWith('.') ? alias : `${alias}.`;
+  const key = String(status).trim();
+  if (USER_COUPON_STATE_SQL[key]) {
+    return { sql: USER_COUPON_STATE_SQL[key].replace(/\bu\./g, a), params: [] };
+  }
+  const n = Number(key);
+  if (!Number.isNaN(n)) return { sql: `${a}status = ?`, params: [n] };
+  return null;
+}
+
+/** 构造批次状态筛选条件（同上） */
+function buildCouponStatusFilter(status, alias = '') {
+  if (status === undefined || status === null || status === '') return null;
+  const a = alias ? (alias.endsWith('.') ? alias : `${alias}.`) : '';
+  const key = String(status).trim();
+  if (COUPON_RUNTIME_SQL[key]) {
+    return { sql: COUPON_RUNTIME_SQL[key].replace(/\bstatus\b/g, `${a}status`), params: [] };
+  }
+  const n = Number(key);
+  if (!Number.isNaN(n)) return { sql: `${a}status = ?`, params: [n] };
+  return null;
+}
+
 function randStr(n) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let s = '';
@@ -175,9 +308,11 @@ async function getCouponList({ page = 1, pageSize = 10, name, status } = {}) {
       where.push('(name LIKE ? OR coupon_id LIKE ?)');
       params.push(`%${name}%`, `%${name}%`);
     }
-    if (status !== undefined && status !== null && status !== '') {
-      where.push('status = ?');
-      params.push(Number(status));
+    // v1.7.7：支持虚拟状态（ended / claim_ended / active / not_start / discarded）
+    const st = buildCouponStatusFilter(status);
+    if (st) {
+      where.push(st.sql);
+      params.push(...st.params);
     }
     const whereSql = where.join(' AND ');
     const offset = (Number(page) - 1) * Number(pageSize);
@@ -363,9 +498,11 @@ async function getUserCoupons(uid, { carId, status, amount } = {}) {
   try {
     const where = ['u.uid = ?'];
     const params = [uid];
-    if (status !== undefined && status !== null && status !== '') {
-      where.push('u.status = ?');
-      params.push(Number(status));
+    // v1.7.7：支持虚拟状态（expired / usable / not_start …）与原有数字状态
+    const st = buildUserCouponStatusFilter(status, 'u');
+    if (st) {
+      where.push(st.sql);
+      params.push(...st.params);
     }
     if (carId) {
       where.push('(u.scope_type = 1 OR (u.scope_type = 2 AND FIND_IN_SET(?, IFNULL(u.scope_car_ids,\'\'))))');
@@ -377,8 +514,9 @@ async function getUserCoupons(uid, { carId, status, amount } = {}) {
       params
     );
     // usable / unusable_reason 一并算好，前端可直接置灰并提示原因
-    return rows.map((r) => {
+    const list = rows.map((r) => {
       const check = validateCoupon(r, { carId, orderAmount: amount });
+      const state = deriveUserCouponState(r);
       return {
         coupon_sn: r.coupon_sn,
         coupon_id: r.coupon_id,
@@ -387,13 +525,23 @@ async function getUserCoupons(uid, { carId, status, amount } = {}) {
         scope_type: Number(r.scope_type),
         use_start_time: r.use_start_time,
         use_end_time: r.use_end_time,
+        // v1.7.7：status 保持原值（0/1/2），另给派生状态供展示
         status: Number(r.status),
         status_text: USER_COUPON_STATUS_TEXT[r.status],
+        state,
+        state_text: USER_COUPON_STATE_TEXT[state],
         receive_time: r.receive_time,
         usable: check.ok,
         unusable_reason: check.ok ? '' : check.msg,
       };
     });
+    // 券包排序：可用在前（临期优先），过期与已用/作废靠后
+    list.sort((a, b) => {
+      const w = (USER_COUPON_STATE_ORDER[a.state] ?? 9) - (USER_COUPON_STATE_ORDER[b.state] ?? 9);
+      if (w !== 0) return w;
+      return new Date(a.use_end_time).getTime() - new Date(b.use_end_time).getTime();
+    });
+    return list;
   } finally {
     db.close();
   }
@@ -421,9 +569,11 @@ async function getUserCouponRecords({ couponId, page = 1, pageSize = 10, status,
   try {
     const where = ['u.coupon_id = ?'];
     const params = [couponId];
-    if (status !== undefined && status !== null && status !== '') {
-      where.push('u.status = ?');
-      params.push(Number(status));
+    // v1.7.7：支持虚拟状态（expired / usable / not_start …）与原有数字状态
+    const st = buildUserCouponStatusFilter(status, 'u');
+    if (st) {
+      where.push(st.sql);
+      params.push(...st.params);
     }
     const kw = String(keyword).trim();
     if (kw) {
@@ -451,7 +601,10 @@ async function getUserCouponRecords({ couponId, page = 1, pageSize = 10, status,
               IFNULL(SUM(CASE WHEN u.status = 0 THEN 1 ELSE 0 END), 0) AS unused,
               IFNULL(SUM(CASE WHEN u.status = 1 THEN 1 ELSE 0 END), 0) AS used,
               IFNULL(SUM(CASE WHEN u.status = 2 THEN 1 ELSE 0 END), 0) AS invalid,
-              IFNULL(SUM(CASE WHEN u.status = 1 THEN u.amount ELSE 0 END), 0) AS used_amount
+              IFNULL(SUM(CASE WHEN u.status = 1 THEN u.amount ELSE 0 END), 0) AS used_amount,
+              -- v1.7.7：过期未核销（status 仍为未使用但已过使用期）= 发出去却没让利出去的钱
+              IFNULL(SUM(CASE WHEN u.status = 0 AND u.use_end_time < NOW() THEN 1 ELSE 0 END), 0) AS expired,
+              IFNULL(SUM(CASE WHEN u.status = 0 AND u.use_end_time < NOW() THEN u.amount ELSE 0 END), 0) AS expired_amount
        FROM pp_user_coupon u
        LEFT JOIN pp_user p ON p.id = u.uid
        WHERE ${whereSql}`,
@@ -467,6 +620,9 @@ async function getUserCouponRecords({ couponId, page = 1, pageSize = 10, status,
         amount: Number(r.amount),
         status: Number(r.status),
         status_text: USER_COUPON_STATUS_TEXT[r.status],
+        // v1.7.7：派生状态（已过期 / 已使用 / 已作废 …）
+        state: deriveUserCouponState(r),
+        state_text: USER_COUPON_STATE_TEXT[deriveUserCouponState(r)],
         receive_seq: Number(r.receive_seq),
         receive_time: r.receive_time,
         use_time: r.use_time,
@@ -484,6 +640,9 @@ async function getUserCouponRecords({ couponId, page = 1, pageSize = 10, status,
         used: Number(cnt.used) || 0,
         invalid: Number(cnt.invalid) || 0,
         usedAmount: Number(cnt.used_amount) || 0,
+        // v1.7.7：过期未核销张数与金额（口径与上方一致：跟随当前筛选条件）
+        expired: Number(cnt.expired) || 0,
+        expiredAmount: Number(cnt.expired_amount) || 0,
       },
     };
   } finally {
@@ -620,6 +779,16 @@ module.exports = {
   USER_COUPON_STATUS,
   COUPON_STATUS_TEXT,
   USER_COUPON_STATUS_TEXT,
+  // v1.7.7：派生状态（过期等，只读计算不落库）
+  USER_COUPON_STATE,
+  USER_COUPON_STATE_TEXT,
+  USER_COUPON_STATE_ORDER,
+  COUPON_RUNTIME_STATUS,
+  COUPON_RUNTIME_STATUS_TEXT,
+  deriveUserCouponState,
+  deriveCouponRuntimeStatus,
+  buildUserCouponStatusFilter,
+  buildCouponStatusFilter,
   genCouponId,
   createCoupon,
   updateCoupon,

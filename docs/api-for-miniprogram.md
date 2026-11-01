@@ -7,7 +7,7 @@
 > - 文档维护约定：**任何涉及小程序端接口的改动，都必须同步更新本文件后再交付前端**（版本记录见文末 Change Log）
 > - **交付约定：改动涉及本文件所列接口时，必须向项目负责人明确报告「入参/出参是否有变动」，若前端需因此改代码（新增返回字段、新增错误码、字段类型/单位变化等）必须单独提醒其更新小程序**
 >
-> 适用版本：后端 **v1.7.6** ｜ 更新日期：2026-11-01
+> 适用版本：后端 **v1.7.7** ｜ 更新日期：2026-11-02
 
 ---
 
@@ -445,9 +445,11 @@ async onGetPhone(e) {
 | 项 | 内容 |
 |---|---|
 | 方法 / 路径 | `GET /getUserCoupons` |
-| 参数 | `uid`（必填）、`carId`（可选，只返回**该车辆可用**的券）、`status`（可选：0未使用/1已使用/2已作废）、**`amount`（结算页必传：本次订单原价，取不带券调一次 `/checkout` 的 `total_price`）** |
-| 成功 | `{code:200, result:[{coupon_sn, coupon_id, name, amount, scope_type, use_start_time, use_end_time, status, status_text, usable, unusable_reason}], total}` |
+| 参数 | `uid`（必填）、`carId`（可选，只返回**该车辆可用**的券）、`status`（可选：0未使用/1已使用/2已作废，**v1.7.7 起也支持派生状态字符串** `usable`/`not_start`/`expired`/`used`/`invalid`）、**`amount`（结算页必传：本次订单原价，取不带券调一次 `/checkout` 的 `total_price`）** |
+| 成功 | `{code:200, result:[{coupon_sn, coupon_id, name, amount, scope_type, use_start_time, use_end_time, status, status_text, **state**, **state_text**, usable, unusable_reason}], total}` |
 | 说明 | `usable` **已综合**状态、有效期、适用范围与金额门槛，前端直接据此置灰；`unusable_reason` 可直接展示给用户（如「已过期」「不适用于当前车辆」「订单金额需大于优惠券面额，该券本次不可用」），可用时为空串 |
+| **v1.7.7 `state` 派生状态** | 库里 `status` 只有 0未使用/1已使用/2已作废，**没有「已过期」**。新增只读的 `state`：`usable` 可用 / `not_start` 未生效 / **`expired` 已过期** / `used` 已使用 / `invalid` 已作废（对应中文在 `state_text`）。**展示用 `state_text`，别用 `status_text`**——后者永远是「未使用」，过期券显示不出来 |
+| **排序（v1.7.7）** | 服务端已排好：**可用券在前（临期优先），已过期与已用/已作废靠后**，前端不要二次排序 |
 | **不传 `amount` 时** | 只判断状态/有效期/适用范围（**券包浏览**场景）；**结算页必须传**，否则用户会看到「本单实际用不了」的券 |
 | 失败 | `{code:400, msg:'缺少参数：uid'}` |
 
@@ -498,6 +500,7 @@ async onGetPhone(e) {
 
 | 版本 | 日期 | 涉及接口 | 变更内容 | 前端是否需改 |
 |---|---|---|---|---|
+| v1.7.7 | 2026-11-02 | `GET /getUserCoupons` | **券包新增「已过期」状态**：`status` 字段只有 0/1/2 表达不了过期，现新增只读的**派生状态** `state`（`usable`/`not_start`/**`expired`**/`used`/`invalid`）与中文 `state_text`。**服务端已按「可用在前、过期靠后」排好序**。筛选也支持传 `status=expired`/`usable` | **需要**：券包展示改用 `state_text`（用 `status_text` 的话过期券会一直显示「未使用」）；**过期券保留并置灰**展示即可，不要隐藏（用户要能看到自己领过什么） |
 | v1.7.6 | 2026-11-01 | `GET /getCarList`、`GET /getCarInfo` | **车辆对象新增详情页三字段**：`images`（轮播图 URL 数组，最多 8 张，**`images[0]` 是主图**）、`tags`（标签数组，最多 6 个）、`config`（配置键值对对象，如 `{"座位":"5座","排量":"2.0T"}`）。三个字段**恒为数组/对象**（不会是 `null`、也不会是字符串），可直接渲染 | **需要**：详情页用 `images` 做轮播、`tags` 做标签行、`config` 渲染配置表。**用户评价本期无数据**，前端先不要接评价区块 |
 | v1.7.6 | 2026-11-01 | 后台车辆录入 | 车辆管理新增「轮播图（多图，≤5MB/张，可设主图）」「标签（动态增删）」「配置参数（键值对增删）」三组录入项；**轮播图第 1 张自动同步为主图** | 否（运营侧操作）。**运营需先补录标签与配置，否则详情页这两块为空** |
 | v1.7.5 | 2026-11-01 | `GET /getCarInfo`（**新接口**） | **车辆详情**：`carId` 必填、**`uid` 选填**（未登录可不传，传了才带券后价），另可选 `pickUpTime`/`returnTime`/`insuranceLevel`/`driver_price`。返回 `data`（车辆对象）+ 计价明细（`rentDay`/`total_price`/`discount_price`/**`pay_amount`**）+ `best_coupon`（本次最优可用券，无券为 `null`）+ `coupon_count`（可用券张数）+ `has_coupon`。未传取还车时间时按**默认 1 天**算参考价 | **需要**：详情页改调本接口，别再复用列表缓存或 `/checkout` 的 `data` 拼装；展示价用 `pay_amount`（无券时等于 `total_price`）；已登录时把 `uid` 带上才会出现券后价 |

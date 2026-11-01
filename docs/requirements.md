@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.7.6 ｜ 日期：2026-11-01 ｜ 状态：迭代中
+> 版本：v1.7.7 ｜ 日期：2026-11-02 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -338,6 +338,34 @@ uid 已就绪
 
 **批次状态流转**：`未开始(0) → 活动中(1) → 已废弃(2)`，均由后台手工切换，**已废弃不可逆**。
 
+#### 状态口径：为什么「已过期」不落库（v1.7.7）
+
+库里的 `status` 只有生命周期的**动作**（未开始/活动中/已废弃、未使用/已使用/已作废），**没有「已过期」**。`pp_coupon` 与 `pp_user_coupon` 也**不新增状态位**，改为在读取时派生：
+
+| 对象 | 派生字段 | 取值 | 判定 |
+|---|---|---|---|
+| 用户券 | `state` | `usable` / `not_start` / **`expired`** / `used` / `invalid` | `status=1`→used；`status=2`→invalid；未开始→not_start；**`use_end_time < now` → expired**；否则 usable |
+| 批次 | `runtime_status` | `not_start` / `active` / **`claim_ended`** / **`ended`** / `discarded` | `status=2`→discarded；**`now > use_end_time` → ended**；`now > receive_end_time` → claim_ended（领完了但还能用）；否则 active |
+
+**为什么这样设计**：
+
+1. **过期是时间的函数，不是动作**。写进 `status` 就要靠定时任务翻转，任务挂了数据就错位；本项目定时任务只有 token 刷新，多一个就多一个要盯的进程。
+2. **「已过期」与「已使用/已作废」正交**。挤进同一字段会丢信息——一张券过期后，你再也分不清它是「过期未用」还是「运营手动作废」，而财务复盘要的正是这个区分。
+3. 唯一真源已有：`validateCoupon` 一直按 `use_end_time` 判断，派生只是把它**暴露给展示层**。
+
+**筛选怎么做（虚拟状态值 → SQL）**：不落库也能筛，接口 `status` 参数同时接受数字与字符串，`coupon.model` 里做翻译：
+
+| 传值 | 翻译后的 SQL（用户券） |
+|---|---|
+| `expired` | `status = 0 AND use_end_time < NOW()` |
+| `usable` | `status = 0 AND NOW() BETWEEN use_start_time AND use_end_time` |
+| `not_start` | `status = 0 AND use_start_time > NOW()` |
+| `0` / `1` / `2` | `status = ?`（**旧值完全兼容**） |
+
+批次同理：`ended` / `claim_ended` / `active` / `not_start` / `discarded`。C 端券包默认**不过滤过期券**（保留置灰展示），由服务端按「可用在前、过期靠后」排好序。
+
+**「过期未核销金额」**：`status=0 AND use_end_time < NOW()` 的面额合计，即发出去却没让利出去的钱，已加进领券记录页的统计卡片。
+
 | 环节 | 规则 |
 |---|---|
 | 领取 | 仅「活动中」且在领取时间窗口内的批次可领；每人限领 `per_limit` 张；库存原子扣减（`UPDATE ... WHERE remain_stock > 0`），扣不到即已领完 |
@@ -594,6 +622,7 @@ total_price                                     // 保持原价不变，GMV/报�
 
 | 版本 | 日期 | 变更内容 | 备注 |
 |---|---|---|---|
+| v1.7.7 | 2026-11-02 | **优惠券「已过期」状态——用派生状态，不落库**：① `pp_coupon` / `pp_user_coupon` **不动表结构**，新增只读派生状态：用户券 `state`（`usable`/`not_start`/**`expired`**/`used`/`invalid`）+ `state_text`；批次 `runtime_status`（`not_start`/`active`/**`claim_ended` 已停止领取**/**`ended` 已结束**/`discarded`）+ `runtime_status_text`。判定集中在 `coupon.model` 的 `deriveUserCouponState` / `deriveCouponRuntimeStatus`，以服务端当前时间为准；② **虚拟状态筛选**：接口 `status` 参数同时接受数字与字符串，`expired` 翻译为 `status=0 AND use_end_time < NOW()` 等，**旧数字值完全兼容**；③ C 端券包默认仍返回过期券（**保留置灰**），服务端按「可用在前、临期优先，过期与终态靠后」排序；④ 后台批次列表状态列显示派生状态（与库内 `status` 不一致时补注「（库内：活动中）」避免运营困惑），筛选下拉增加「已结束（过期）/ 已停止领取」；⑤ 领券记录页状态列显示「已过期」，筛选增加 可用/未生效/已过期，统计卡片新增**「已过期张数」「过期未核销金额」** | **设计取舍**：过期是时间的函数而非动作，写进 status 需定时任务翻转（多一个要盯的进程），且会覆盖「过期前是未使用还是被作废」这一信息——财务复盘要的正是这个区分，故**不引入定时任务**。实测 9 项全通：批次 `CP2026102697RDZE`（使用期 10-27 已过）正确派生为「已结束」，虚拟筛选 `ended`=1、`active`=1、旧值 `status=1`=2（兼容）；用户券 uid=250 已过期券 `state=expired`、`usable=false`；领券记录 summary 新增 `expired=2 / expiredAmount=40`；C 端筛 `expired`=1、`usable`=0、旧值 `status=0`=1。admin-web 构建通过 |
 | v1.7.6 | 2026-11-01 | **车辆详情页数据层（轮播图 / 标签 / 配置参数）**：① `pp_car` 新增三个 JSON 列 —— `images`（轮播图数组，最多 8 张，第 1 张为列表与详情主图）、`tags`（标签数组，最多 6 个，单条 ≤10 字）、`config`（配置参数键值对，最多 20 项），迁移脚本 `scripts/migrate_car_detail_fields.js`（幂等、先建库内备份表、中文注释显式 `SET NAMES utf8mb4`、并把 24 辆存量车的 `image_url` 回填为 `images` 第 1 张）；② 新增 `src/services/car.service.js` 统一做三个字段的**归一化**（后台写入与 C 端读取共用，脏数据/非法 URL/超量/重复全部收敛），C 端 `/getCarList`、`/getCarInfo` 与后台车辆列表均返回归一化结果，`images` 为空时自动回退 `[image_url]`；③ 后台车辆 CRUD 支持这三个字段，**更新采用动态 SET——只更新 payload 里显式传了的字段**（列表页「排序值即时保存」等整行提交不会误清空运营已录入内容）；保存时若传了 `images`，自动把 `image_url` 同步为 `images[0]`；④ `admin-web` 车辆表单新增：多图上传（≤5MB/张，缩略图列表 + 删除 + 「设为主图」）、标签动态添加/删除、配置参数键值对增删 | 面向小程序**车辆详情页**（列表页与结算页之间）。**用户评价本期不做**（库内无评价表，下一版再建 `pp_car_review`）。实测 6 项全通：创建带 2 图/2 标签/2 配置的测试车 → C 端详情正确返回；整行更新（不带这三个字段）后内容**未被清空**；改为 1 标签 + 空配置后正确落库；主图自动同步为 `images[0]`；逗号串与非法 URL 等脏入参被正确过滤；测试车已删除（车辆总数 24→25→24）。admin-web 构建通过 |
 | v1.7.5 | 2026-11-01 | **新增 C 端车辆详情接口 `GET /getCarInfo`**：① 入参 `carId` 必填、**`uid` 选填**（未登录也能看车，传了才附带券后价），另可选 `pickUpTime`/`returnTime`/`insuranceLevel`/`driver_price`；② 返回车辆对象 `data` + 与 `/checkout` 同构的计价明细（`rentDay`、`total_price`、`discount_price`、**`pay_amount`**）+ `best_coupon`/`coupon_count`/`has_coupon`；③ 券后价口径：复用 `coupon.service.pickBestCoupon`（新增）挑出「本次可用且抵扣最多」的一张券（面额相同时优先临期券），**只试算展示、不锁定不核销**，沿用「默认不选券」规则；可用性判定复用 `validateCoupon`，与结算/下单同口径（含「订单金额需大于券面额」门槛）；④ 未传取还车时间时按**默认 1 天**算参考价（详情页通常还没选日期）；⑤ 下架车辆返回 `400 该车辆已下架，暂不可预订`，与 `/createOrder` 一致；⑥ 新增 `src/utils/time.js` 的 `formatDateTime`（东八区 `YYYY-MM-DD HH:mm:ss`），券有效期等时间字段不再吐 ISO UTC 串 | 实测：无 uid 与带 uid 均返回 `code:200`（carId=1 参考价 349 = 199 租金 + 100 保险 + 50 整备，`rentDay=1`）；缺参/车辆不存在/下架分别返回明确 400；计价口径验证 2 天 648、用 20 元券 → 抵扣 20 / 实付 628；券已过期（库内仅有的两张券 10-27 到期）与匿名访问均正确返回 `coupon_count=0`、`best_coupon=null`。**本次为只读实现，未写入任何生产数据**。文档已同步接口文档 §2.2 与两份 Change Log |
 | v1.7.4 | 2026-10-31 | **建立「可跨账号/跨工具」的 AI 协作契约（项目记忆入库）**：① 新增根目录 `AGENTS.md`——任何时候进入仓库的第一入口，含五条红线（不自动 commit/push、迭代必须同步需求文档与 Change Log、涉 C 端接口联动接口文档、金额以 `pay_amount` 为准、计价唯一真源）、环境速查、目录地图、业务口径、编码约定、12 条已知坑、按任务类型的检查清单；CodeBuddy 在无 `CODEBUDDY.md` 时自动加载，Cursor/Claude Code/Codex 通用；② 新增 `.codebuddy/rules/pangpai-car-core/RULE.mdc`（`alwaysApply`，常驻红线）与 `.codebuddy/rules/pangpai-car-docs/RULE.mdc`（按需，文档收尾工作流）；③ 新增 `docs/ai-context.md`：深度技术上下文（装配顺序、用户链路、计价、下单支付、退款、优惠券、后台层、基础设施、管理前端、脚本/部署/配置、13 条缺陷明细） | **动因**：项目约定此前只挂在 AI 的账号记忆上，用户更换 CodeBuddy 账号后全部丢失（当天就出现了「擅自想 commit、忘记更新需求文档」的情况）。三份文件随仓库走，是唯一可靠载体。**内容均经代码核实**：调研过程中主动否掉了一条错误结论（子代理称「不存在 `@vueuse/core` 依赖」，实为 `admin-web/package-lock.json` 命中 9 处、`node_modules/@vueuse` 实体存在，EBADENGINE 警告属实）；并抽查复核了订单号生成（`genOrderSn` 确为 `'PP'+YYYYMMDDHHmmss`）、本地建表脚本缺券表（`local-dev-init.sql` 中 `pp_coupon` 命中数为 0）、整备费不乘天数三项关键事实。本次仅新增文档与规则文件，**未改动任何业务代码** |

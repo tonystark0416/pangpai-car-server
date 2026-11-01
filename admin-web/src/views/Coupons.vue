@@ -3,9 +3,12 @@
     <el-card>
       <div class="toolbar">
         <el-input v-model="query.name" placeholder="券名称 / 批次号" clearable style="width: 220px" @keyup.enter="load" />
-        <el-select v-model="query.status" clearable placeholder="全部状态" style="width: 120px">
+        <!-- v1.7.7：状态筛选支持「派生状态」虚拟值——已结束/已停止领取是按时间算出来的，不落库 -->
+        <el-select v-model="query.status" clearable placeholder="全部状态" style="width: 140px">
           <el-option label="未开始" :value="0" />
-          <el-option label="活动中" :value="1" />
+          <el-option label="活动中" :value="'active'" />
+          <el-option label="已停止领取" :value="'claim_ended'" />
+          <el-option label="已结束（过期）" :value="'ended'" />
           <el-option label="已废弃" :value="2" />
         </el-select>
         <el-button type="primary" @click="load">查询</el-button>
@@ -44,9 +47,13 @@
           <template #default="{ row }">{{ row.per_limit }} / {{ row.use_per_limit }}</template>
         </el-table-column>
         <el-table-column prop="bear_text" label="承担方" width="100" />
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)">{{ row.status_text }}</el-tag>
+            <el-tag :type="runtimeStatusType(row.runtime_status)">{{ row.runtime_status_text || row.status_text }}</el-tag>
+            <!-- 与库里存的 status 不一致时（如库里仍「活动中」但已过期），把原状态补在下面避免运营困惑 -->
+            <div v-if="row.runtime_status_text && row.runtime_status_text !== row.status_text" class="sub-fee">
+              （库内：{{ row.status_text }}）
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="250" fixed="right">
@@ -161,6 +168,22 @@ function openRecords(row) {
 
 function statusType(status) {
   return { 0: 'info', 1: 'success', 2: 'danger' }[status] || 'info';
+}
+
+/**
+ * v1.7.7：派生状态的标签配色
+ * 已结束/已废弃用灰（终态），已停止领取用警告色（还能用，只是领不了了）
+ */
+function runtimeStatusType(s) {
+  return (
+    {
+      not_start: 'info',
+      active: 'success',
+      claim_ended: 'warning',
+      ended: 'info',
+      discarded: 'danger',
+    }[s] || 'info'
+  );
 }
 
 async function load() {

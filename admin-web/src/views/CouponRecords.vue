@@ -17,7 +17,12 @@
         <el-descriptions-item label="券名称">{{ coupon.name || '-' }}</el-descriptions-item>
         <el-descriptions-item label="面额">￥{{ coupon.amount }}</el-descriptions-item>
         <el-descriptions-item label="批次状态">
-          <el-tag :type="couponStatusType(coupon.status)" size="small">{{ coupon.status_text || '-' }}</el-tag>
+          <el-tag :type="couponRuntimeType(coupon.runtime_status)" size="small">
+            {{ coupon.runtime_status_text || coupon.status_text || '-' }}
+          </el-tag>
+          <span v-if="coupon.runtime_status_text && coupon.runtime_status_text !== coupon.status_text" class="sub-fee">
+            （库内：{{ coupon.status_text }}）
+          </span>
         </el-descriptions-item>
         <el-descriptions-item label="领取时间">
           {{ formatDateTime(coupon.receive_start_time) }} ~ {{ formatDateTime(coupon.receive_end_time) }}
@@ -36,34 +41,48 @@
 
     <!-- 统计 -->
     <el-row :gutter="12" class="stat-row">
-      <el-col :span="4">
+      <el-col :span="3">
         <el-card shadow="never">
           <div class="stat-label">累计领取</div>
           <div class="stat-value">{{ total }}</div>
         </el-card>
       </el-col>
-      <el-col :span="5">
+      <el-col :span="3">
         <el-card shadow="never">
           <div class="stat-label">未使用</div>
           <div class="stat-value">{{ summary.unused }}</div>
         </el-card>
       </el-col>
-      <el-col :span="5">
+      <el-col :span="3">
         <el-card shadow="never">
           <div class="stat-label">已使用</div>
           <div class="stat-value">{{ summary.used }}</div>
         </el-card>
       </el-col>
-      <el-col :span="5">
+      <el-col :span="3">
         <el-card shadow="never">
           <div class="stat-label">已作废</div>
           <div class="stat-value">{{ summary.invalid }}</div>
         </el-card>
       </el-col>
-      <el-col :span="5">
+      <!-- v1.7.7：过期未核销 = 发出去但没让利出去的钱 -->
+      <el-col :span="3">
+        <el-card shadow="never">
+          <div class="stat-label">已过期</div>
+          <div class="stat-value amount-expired">{{ summary.expired }}</div>
+          <div class="sub-fee">￥{{ summary.expiredAmount }}</div>
+        </el-card>
+      </el-col>
+      <el-col :span="4">
         <el-card shadow="never">
           <div class="stat-label">已核销金额</div>
           <div class="stat-value amount-discount">￥{{ summary.usedAmount }}</div>
+        </el-card>
+      </el-col>
+      <el-col :span="5">
+        <el-card shadow="never">
+          <div class="stat-label">过期未核销金额</div>
+          <div class="stat-value amount-expired">￥{{ summary.expiredAmount }}</div>
         </el-card>
       </el-col>
     </el-row>
@@ -73,8 +92,12 @@
       <div class="toolbar">
         <el-input v-model="query.keyword" placeholder="手机号 / 昵称 / 账号名 / 券码" clearable
           style="width: 260px" @keyup.enter="load" />
-        <el-select v-model="query.status" clearable placeholder="全部状态" style="width: 130px">
-          <el-option label="未使用" :value="0" />
+        <!-- v1.7.7：可用/已过期等为「派生状态」虚拟值，按服务端当前时间实时算，不落库 -->
+        <el-select v-model="query.status" clearable placeholder="全部状态" style="width: 140px">
+          <el-option label="可用" :value="'usable'" />
+          <el-option label="未生效" :value="'not_start'" />
+          <el-option label="已过期" :value="'expired'" />
+          <el-option label="未使用（含过期）" :value="0" />
           <el-option label="已使用" :value="1" />
           <el-option label="已作废" :value="2" />
         </el-select>
@@ -97,9 +120,12 @@
         <el-table-column label="面额" width="90">
           <template #default="{ row }"><b>￥{{ row.amount }}</b></template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="statusType(row.status)" size="small">{{ row.status_text }}</el-tag>
+            <el-tag :type="stateType(row.state)" size="small">{{ row.state_text || row.status_text }}</el-tag>
+            <div v-if="row.state_text && row.state_text !== row.status_text" class="sub-fee">
+              （库内：{{ row.status_text }}）
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="领取时间" width="170">
@@ -143,7 +169,7 @@ const loading = ref(false);
 const rows = ref([]);
 const total = ref(0);
 const coupon = ref({});
-const summary = reactive({ unused: 0, used: 0, invalid: 0, usedAmount: 0 });
+const summary = reactive({ unused: 0, used: 0, invalid: 0, usedAmount: 0, expired: 0, expiredAmount: 0 });
 const query = reactive({ page: 1, pageSize: 10, keyword: '', status: '' });
 
 /** 用户券状态：0未使用 1已使用 2已作废 */
@@ -151,8 +177,34 @@ function statusType(status) {
   return { 0: 'warning', 1: 'success', 2: 'info' }[status] || 'info';
 }
 
+/** v1.7.7：派生状态配色（已过期用 info 灰，与「还能用的未使用 warning」区分开） */
+function stateType(state) {
+  return (
+    {
+      usable: 'warning',
+      not_start: 'info',
+      expired: 'info',
+      used: 'success',
+      invalid: 'danger',
+    }[state] || statusType(undefined)
+  );
+}
+
 function couponStatusType(status) {
   return { 0: 'info', 1: 'success', 2: 'danger' }[status] || 'info';
+}
+
+/** v1.7.7：批次派生状态配色 */
+function couponRuntimeType(s) {
+  return (
+    {
+      not_start: 'info',
+      active: 'success',
+      claim_ended: 'warning',
+      ended: 'info',
+      discarded: 'danger',
+    }[s] || couponStatusType(undefined)
+  );
 }
 
 async function load() {
@@ -224,5 +276,8 @@ onMounted(load);
 }
 .amount-discount {
   color: #e6a23c;
+}
+.amount-expired {
+  color: #909399;
 }
 </style>

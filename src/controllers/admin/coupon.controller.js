@@ -61,6 +61,9 @@ async function list(req, res) {
     ...r,
     amount: Number(r.amount),
     status_text: coupon.COUPON_STATUS_TEXT[r.status],
+    // v1.7.7：派生状态——区分「已结束（使用期过了）」与「已停止领取（还能用）」
+    runtime_status: coupon.deriveCouponRuntimeStatus(r),
+    runtime_status_text: coupon.COUPON_RUNTIME_STATUS_TEXT[coupon.deriveCouponRuntimeStatus(r)],
     scope_text: Number(r.scope_type) === 1 ? '全场通用' : '指定车辆',
     bear_text: r.bear_type === 'platform' ? '平台承担' : r.bear_type,
   }));
@@ -110,6 +113,9 @@ async function records(req, res) {
         remain_stock: Number(couponRow.remain_stock),
         status: Number(couponRow.status),
         status_text: coupon.COUPON_STATUS_TEXT[couponRow.status],
+        // v1.7.7：批次派生状态（已结束 / 已停止领取 / 活动中 …）
+        runtime_status: coupon.deriveCouponRuntimeStatus(couponRow),
+        runtime_status_text: coupon.COUPON_RUNTIME_STATUS_TEXT[coupon.deriveCouponRuntimeStatus(couponRow)],
       },
       list: data.list,
       total: data.total,
