@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node app.js",
     "dev": "node --watch app.js",
-    "task:token": "node src/tasks/refreshAccessToken.js"
+    "task:token": "node src/tasks/refreshAccessToken.js",
+    "task:paycheck": "node src/tasks/checkPendingPayments.js",
+    "task:paycheck:once": "node src/tasks/checkPendingPayments.js --once --dry-run"
   },
   "author": "",
   "license": "ISC",

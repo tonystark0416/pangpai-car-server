@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.7.7 ｜ 日期：2026-11-02 ｜ 状态：迭代中
+> 版本：v1.7.8 ｜ 日期：2026-11-02 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -148,7 +148,8 @@ pangpai-car/
     │   ├── validate.js          # 手机号规范化与校验（结算 / 下单共用）
     │   └── time.js              # 时间格式化（东八区，v1.7.5）
     ├── tasks/
-    │   └── refreshAccessToken.js # 定时刷新小程序 / 企微 access_token
+    │   ├── refreshAccessToken.js # 定时刷新小程序 / 企微 access_token
+    │   └── checkPendingPayments.js # v1.7.8 定时查单兜底（回调丢失时补写订单支付状态）
     └── data/                    # 支付证书、access_token 缓存（不入库）
 ```
 
@@ -538,8 +539,30 @@ total_price                                     // 保持原价不变，GMV/报�
 | 脚本 | 运行方式 | 频率 | 说明 |
 |---|---|---|---|
 | `tasks/refreshAccessToken.js` | **PM2 应用 `pangpai-token`**（v1.6.5 起，`ecosystem.config.cjs` 托管；亦可 `npm run task:token` 临时跑） | 启动即刷新一次 + 每小时整点 | 刷新小程序 + 企业微信 access_token，写入 `TOKEN_DIR`（`src/data`）下 txt 供运行时读取 |
+| `tasks/checkPendingPayments.js` | **PM2 应用 `pangpai-paycheck`**（v1.7.8 新增，`ecosystem.config.cjs` 托管；亦可 `npm run task:paycheck` 临时跑） | 启动即跑一轮 + 每 2 分钟一轮 | **支付查单兜底**：扫「未支付且未取消」的订单 → 调微信 `/pay/orderquery` → 微信侧已 SUCCESS 则复用 `markOrderPaid` 补写订单状态并补发企微通知 |
 
 **双保险机制（v1.6.5）**：① 定时任务负责常规小时级刷新；② 主服务读取侧兜底——`getAccessTokenCached()`（小程序）/ `getWorkTokenCached()`（企微）在缓存文件**缺失或超过 90 分钟未更新**（任务进程挂掉）时自动重取并落盘，微信 token 有效期 7200s，90 分钟阈值与小时级刷新留足余量。
+
+#### 支付查单兜底（v1.7.8）
+
+**要解决的问题**：订单支付状态的唯一真源是微信回调 `/wxPayCallback`，但回调依赖微信能访问我们的公网地址。网络抖动、部署重启、微信重推失败时，会出现**用户钱付了、订单仍显示待支付**——这是真实的资金与客诉风险。微信官方要求「回调 + 查单」双保险，本任务即第二道保险。
+
+| 项 | 规则 |
+|---|---|
+| 扫描范围 | `pay_status = 0`（未支付）**且** `order_status = 0`（待取车，排除已取消废单）**且** 创建时间在 **3 分钟 ~ 24 小时** 之间（太新的用户可能正在付，太老的微信侧早已关单） |
+| 每轮上限 | 50 条，串行执行，每条间隔 200ms（不打扰微信接口） |
+| 判定 | 微信返回 `return_code=SUCCESS` + `result_code=SUCCESS` + **`trade_state=SUCCESS`** 才认为已支付；`NOTPAY`/`CLOSED`/`ORDERNOTEXIST` 一律不动库 |
+| 金额核验 | 与回调同口径：`round((pay_amount ?? total_price) × 100)` 必须等于微信 `total_fee`，**对不上只记日志，绝不落库** |
+| 落库 | 复用 `orderModel.markOrderPaid`（仅 `pay_status=0` 才更新），**幂等**；期间被回调先落库时会走「已支付，幂等跳过」 |
+| 通知 | 补单成功补发企微通知（标注「支付回调补单」）——回调丢了意味着运营也没收到新订单通知 |
+| 参数覆盖 | 环境变量 `PAY_CHECK_MIN_AGE` / `PAY_CHECK_MAX_AGE` / `PAY_CHECK_LIMIT` / `PAY_CHECK_STEP_DELAY` |
+
+**人工核对**（不写代码也能查）：
+
+```sh
+npm run task:paycheck:once   # 单轮 + dry-run，只打印会补哪些单，不落库
+npm run task:paycheck        # 常驻（本地调试用，线上交给 PM2）
+```
 
 ---
 
@@ -622,6 +645,7 @@ total_price                                     // 保持原价不变，GMV/报�
 
 | 版本 | 日期 | 变更内容 | 备注 |
 |---|---|---|---|
+| v1.7.8 | 2026-11-02 | **支付查单兜底（资金安全第二道保险）**：① 新增定时任务 `src/tasks/checkPendingPayments.js`（PM2 应用 `pangpai-paycheck`，启动即跑一轮 + 每 2 分钟一轮），扫「未支付且未取消、账龄 3 分钟~24 小时」的订单 → 调微信 `/pay/orderquery` → 微信侧 `trade_state=SUCCESS` 则**复用回调同一落库路径** `markOrderPaid` 补写订单状态，并补发企微通知（标注「支付回调补单」）；② `order.model` 新增 `listUnpaidOrders`（窗口 + 上限可控）；③ `ecosystem.config.cjs` 新增 `pangpai-paycheck` 应用，`package.json` 新增 `task:paycheck` / `task:paycheck:once`（单轮 dry-run） | **为什么要做**：订单支付状态唯一真源是微信回调，回调因网络抖动/部署重启丢失时会出现「钱付了、订单仍待支付」——资金与客诉风险。此前 `src/tasks` 只有 token 刷新，无任何查单兜底。安全边界：金额核验与回调同口径（对不上**绝不落库**）、落库幂等、单条失败不影响整轮、只扫 24h 内未取消订单。实测：用真实订单号验证微信查单返回字段（`return_code`/`result_code`/`trade_state`/`total_fee`，未支付时无 `transaction_id`/`time_end`）；六个分支单测全通（通信失败/ORDERNOTEXIST/NOTPAY→跳过，金额不符→拒绝落库，金额符→补单成功，dry-run→不落库）；三种启动模式（单轮/dry-run/常驻）均正常。⚠️ 联调时用例 5 曾真实写入一笔生产订单 `PP20261018170534` 的支付状态，**已还原**（`pay_status=0`/`transaction_id=NULL`/`pay_time=NULL`，待支付总数仍为 40）。本地环境企微通知因 IP 白名单被拒（errcode 60020），已 try/catch 不影响主流程，**服务器需确认企微可信 IP 已配置** |
 | v1.7.7 | 2026-11-02 | **优惠券「已过期」状态——用派生状态，不落库**：① `pp_coupon` / `pp_user_coupon` **不动表结构**，新增只读派生状态：用户券 `state`（`usable`/`not_start`/**`expired`**/`used`/`invalid`）+ `state_text`；批次 `runtime_status`（`not_start`/`active`/**`claim_ended` 已停止领取**/**`ended` 已结束**/`discarded`）+ `runtime_status_text`。判定集中在 `coupon.model` 的 `deriveUserCouponState` / `deriveCouponRuntimeStatus`，以服务端当前时间为准；② **虚拟状态筛选**：接口 `status` 参数同时接受数字与字符串，`expired` 翻译为 `status=0 AND use_end_time < NOW()` 等，**旧数字值完全兼容**；③ C 端券包默认仍返回过期券（**保留置灰**），服务端按「可用在前、临期优先，过期与终态靠后」排序；④ 后台批次列表状态列显示派生状态（与库内 `status` 不一致时补注「（库内：活动中）」避免运营困惑），筛选下拉增加「已结束（过期）/ 已停止领取」；⑤ 领券记录页状态列显示「已过期」，筛选增加 可用/未生效/已过期，统计卡片新增**「已过期张数」「过期未核销金额」** | **设计取舍**：过期是时间的函数而非动作，写进 status 需定时任务翻转（多一个要盯的进程），且会覆盖「过期前是未使用还是被作废」这一信息——财务复盘要的正是这个区分，故**不引入定时任务**。实测 9 项全通：批次 `CP2026102697RDZE`（使用期 10-27 已过）正确派生为「已结束」，虚拟筛选 `ended`=1、`active`=1、旧值 `status=1`=2（兼容）；用户券 uid=250 已过期券 `state=expired`、`usable=false`；领券记录 summary 新增 `expired=2 / expiredAmount=40`；C 端筛 `expired`=1、`usable`=0、旧值 `status=0`=1。admin-web 构建通过 |
 | v1.7.6 | 2026-11-01 | **车辆详情页数据层（轮播图 / 标签 / 配置参数）**：① `pp_car` 新增三个 JSON 列 —— `images`（轮播图数组，最多 8 张，第 1 张为列表与详情主图）、`tags`（标签数组，最多 6 个，单条 ≤10 字）、`config`（配置参数键值对，最多 20 项），迁移脚本 `scripts/migrate_car_detail_fields.js`（幂等、先建库内备份表、中文注释显式 `SET NAMES utf8mb4`、并把 24 辆存量车的 `image_url` 回填为 `images` 第 1 张）；② 新增 `src/services/car.service.js` 统一做三个字段的**归一化**（后台写入与 C 端读取共用，脏数据/非法 URL/超量/重复全部收敛），C 端 `/getCarList`、`/getCarInfo` 与后台车辆列表均返回归一化结果，`images` 为空时自动回退 `[image_url]`；③ 后台车辆 CRUD 支持这三个字段，**更新采用动态 SET——只更新 payload 里显式传了的字段**（列表页「排序值即时保存」等整行提交不会误清空运营已录入内容）；保存时若传了 `images`，自动把 `image_url` 同步为 `images[0]`；④ `admin-web` 车辆表单新增：多图上传（≤5MB/张，缩略图列表 + 删除 + 「设为主图」）、标签动态添加/删除、配置参数键值对增删 | 面向小程序**车辆详情页**（列表页与结算页之间）。**用户评价本期不做**（库内无评价表，下一版再建 `pp_car_review`）。实测 6 项全通：创建带 2 图/2 标签/2 配置的测试车 → C 端详情正确返回；整行更新（不带这三个字段）后内容**未被清空**；改为 1 标签 + 空配置后正确落库；主图自动同步为 `images[0]`；逗号串与非法 URL 等脏入参被正确过滤；测试车已删除（车辆总数 24→25→24）。admin-web 构建通过 |
 | v1.7.5 | 2026-11-01 | **新增 C 端车辆详情接口 `GET /getCarInfo`**：① 入参 `carId` 必填、**`uid` 选填**（未登录也能看车，传了才附带券后价），另可选 `pickUpTime`/`returnTime`/`insuranceLevel`/`driver_price`；② 返回车辆对象 `data` + 与 `/checkout` 同构的计价明细（`rentDay`、`total_price`、`discount_price`、**`pay_amount`**）+ `best_coupon`/`coupon_count`/`has_coupon`；③ 券后价口径：复用 `coupon.service.pickBestCoupon`（新增）挑出「本次可用且抵扣最多」的一张券（面额相同时优先临期券），**只试算展示、不锁定不核销**，沿用「默认不选券」规则；可用性判定复用 `validateCoupon`，与结算/下单同口径（含「订单金额需大于券面额」门槛）；④ 未传取还车时间时按**默认 1 天**算参考价（详情页通常还没选日期）；⑤ 下架车辆返回 `400 该车辆已下架，暂不可预订`，与 `/createOrder` 一致；⑥ 新增 `src/utils/time.js` 的 `formatDateTime`（东八区 `YYYY-MM-DD HH:mm:ss`），券有效期等时间字段不再吐 ISO UTC 串 | 实测：无 uid 与带 uid 均返回 `code:200`（carId=1 参考价 349 = 199 租金 + 100 保险 + 50 整备，`rentDay=1`）；缺参/车辆不存在/下架分别返回明确 400；计价口径验证 2 天 648、用 20 元券 → 抵扣 20 / 实付 628；券已过期（库内仅有的两张券 10-27 到期）与匿名访问均正确返回 `coupon_count=0`、`best_coupon=null`。**本次为只读实现，未写入任何生产数据**。文档已同步接口文档 §2.2 与两份 Change Log |

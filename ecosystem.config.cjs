@@ -20,6 +20,22 @@ module.exports = {
       time: true,
     },
     {
+      // 支付查单兜底（v1.7.8，启动即跑一轮 + 每 2 分钟一轮）
+      // 回调丢失时靠它把「钱付了但订单还待支付」的订单补上，是资金安全的第二道保险
+      name: 'pangpai-paycheck',
+      script: './src/tasks/checkPendingPayments.js',
+      cwd: __dirname,
+      autorestart: true,
+      max_memory_restart: '200M',
+      env: {
+        NODE_ENV: 'production',
+      },
+      out_file: './logs/paycheck-out.log',
+      error_file: './logs/paycheck-error.log',
+      merge_logs: true,
+      time: true,
+    },
+    {
       // access_token 定时刷新任务（启动即刷一次 + 每小时整点）
       // v1.6.5 起纳入 PM2 托管，避免终端临时进程退出后 token 过期
       name: 'pangpai-token',

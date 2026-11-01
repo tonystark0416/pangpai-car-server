@@ -240,6 +240,39 @@ async function markOrderRefunded(order_sn) {
 }
 
 /**
+ * 待支付订单列表（v1.7.8，供定时查单兜底扫描）
+ *
+ * 只扫「未支付 + 未取消」且创建时间在窗口内的订单：
+ *   - `order_status = 0`：排除已取消（4）的废单，那些不用再查；
+ *   - 创建时间 **早于 minMinutes**：太新的订单用户可能正在付，查了也是白查；
+ *   - 创建时间 **晚于 maxMinutes**：太老的订单微信侧早已关单，没必要反复打扰。
+ *
+ * @param {object} [opt]
+ * @param {number} [opt.minMinutes=3] 最小账龄（分钟）
+ * @param {number} [opt.maxMinutes=1440] 最大账龄（分钟，默认 24 小时）
+ * @param {number} [opt.limit=50] 每轮最多处理条数
+ * @returns {Promise<Array<{order_sn,uid,total_price,pay_amount,create_time}>>}
+ */
+async function listUnpaidOrders({ minMinutes = 3, maxMinutes = 1440, limit = 50 } = {}) {
+    const db = new MySQL();
+    const sql = `SELECT order_sn, uid, total_price, pay_amount, create_time
+       FROM pp_order
+       WHERE pay_status = 0 AND order_status = 0
+         AND create_time <= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+         AND create_time >= DATE_SUB(NOW(), INTERVAL ? MINUTE)
+       ORDER BY create_time DESC
+       LIMIT ?`;
+    try {
+        return await db.query(sql, [Number(minMinutes), Number(maxMinutes), Number(limit)]) || [];
+    } catch (error) {
+        console.error('[order] listUnpaidOrders error:', error.message);
+        return [];
+    } finally {
+        db.close();
+    }
+}
+
+/**
  * 取消未支付订单（v1.6.16，C 端自助取消，不涉及资金）
  * 仅把 order_status 置为 4（已取消）；条件里带上 pay_status=0 与 order_status=0，
  * 保证已支付/已取车/已取消的订单不会被误改
@@ -267,6 +300,7 @@ module.exports = {
     getOrderDetail,
     getOrderList,
     getOrderBySn,
+    listUnpaidOrders,
     cancelUnpaidOrder,
     markOrderPaid,
     markOrderRefunded,
