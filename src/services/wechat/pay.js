@@ -304,6 +304,42 @@ class WechatPayV2 {
         }
         return result;
     }
+
+    /**
+     * 退款查询（v1.7.9）
+     * https://api.mch.weixin.qq.com/pay/refundquery
+     *
+     * 四个标识**四选一**：transaction_id / out_trade_no / out_refund_no / refund_id。
+     * 与 `orderQuery` 一样**返回原始结果不抛错**，由上层判断 `result_code`：
+     * 「退款查询」最常见的正常失败就是 `ORDERNOTEXIST`（还没退过），属于业务分支而非异常。
+     *
+     * 注意：退款到银行卡是异步的，`refund_status` 会经历 `PROCESSING` → `SUCCESS`，
+     * 这正是「不登录微信后台就看不到退款进展」要靠本接口解决的原因。
+     *
+     * @param {object} queryData {transactionId, outTradeNo, outRefundNo, refundId}
+     * @returns {Promise<object>} 微信原始返回
+     */
+    async refundQuery(queryData) {
+        const { transactionId, outTradeNo, outRefundNo, refundId } = queryData || {};
+        if (!transactionId && !outTradeNo && !outRefundNo && !refundId) {
+            throw new Error('退款查询缺少订单标识：需 transactionId / outTradeNo / outRefundNo / refundId 之一');
+        }
+
+        const params = {
+            appid: this.config.appid,
+            mch_id: this.config.mchId,
+            nonce_str: this.generateNonceStr(),
+            ...(transactionId && { transaction_id: transactionId }),
+            ...(outTradeNo && { out_trade_no: outTradeNo }),
+            ...(outRefundNo && { out_refund_no: outRefundNo }),
+            ...(refundId && { refund_id: refundId }),
+        };
+
+        return await this.request(
+            'https://api.mch.weixin.qq.com/pay/refundquery',
+            params
+        );
+    }
 }
 
 module.exports = WechatPayV2;

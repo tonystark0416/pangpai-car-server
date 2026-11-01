@@ -9,6 +9,7 @@ const user = require('../../controllers/admin/user.controller');
 const car = require('../../controllers/admin/car.controller');
 const order = require('../../controllers/admin/order.controller');
 const coupon = require('../../controllers/admin/coupon.controller');
+const pay = require('../../controllers/admin/pay.controller');
 const upload = require('../../controllers/admin/upload.controller');
 const { uploadCarImage } = require('../../middlewares/carUpload');
 
@@ -56,5 +57,14 @@ router.get('/orders/:id', asyncHandler(order.detail));
 router.put('/orders/:id/status', asyncHandler(order.updateStatus));
 router.put('/orders/:id/address', asyncHandler(order.updateAddress));
 router.post('/orders/:id/refund', asyncHandler(order.refund));
+
+// 支付流水（v1.7.9）：后台直接看支付/退款明细，不用登微信支付后台
+// 导出须在 /pay-records/:id 之前注册，否则会被当作 id 匹配
+router.get('/pay-records/export', asyncHandler(pay.exportRecords));
+router.get('/pay-records', asyncHandler(pay.list));
+router.get('/pay-records/:id', asyncHandler(pay.detail));
+router.post('/pay-records/:id/sync', asyncHandler(pay.sync));
+// 某订单的资金流水（订单详情内嵌）
+router.get('/orders/:orderSn/pay-records', asyncHandler(pay.listByOrder));
 
 module.exports = router;

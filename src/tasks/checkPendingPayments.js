@@ -27,6 +27,7 @@ const config = require('../config');
 const WechatPayV2 = require('../services/wechat/pay');
 const work = require('../services/wechat/work');
 const orderModel = require('../models/order.model');
+const payModel = require('../models/pay.model');
 
 const wechatPay = new WechatPayV2(config.wxPay);
 
@@ -84,10 +85,16 @@ async function reconcileOne(order, wx, dryRun) {
   if (affected === 0) {
     // 期间被回调先落库了，说明回调只是慢了——正常，不报错
     console.log(`[pay-check] ${order.order_sn} 已支付（回调已先落库），幂等跳过`);
-    return 'paid';
+  } else {
+    console.log(`[pay-check] ✔ 补单成功：${order.order_sn}（微信单号 ${wx.transaction_id}，${wx.time_end}）`);
   }
 
-  console.log(`[pay-check] ✔ 补单成功：${order.order_sn}（微信单号 ${wx.transaction_id}，${wx.time_end}）`);
+  // v1.7.9：补单成功也写支付流水（source=check，后台能看出这笔是兜底补回来的）
+  try {
+    await payModel.savePayRecord(payModel.buildPayRecordFromPay(order, wx, 'check'));
+  } catch (e) {
+    console.error(`[pay-check] 支付流水写入失败: ${order.order_sn}`, e.message);
+  }
 
   // 回调丢了意味着企微也没收到新订单通知，这里补发一条，标明是补单
   try {

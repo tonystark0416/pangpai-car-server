@@ -9,6 +9,7 @@ const WechatPayV2 = require('./wechat/pay');
 const config = require('../config');
 const orderModel = require('../models/order.model');
 const couponModel = require('../models/coupon.model');
+const payModel = require('../models/pay.model');
 
 const wechatPay = new WechatPayV2(config.wxPay);
 
@@ -60,6 +61,20 @@ async function refundOrder(order, options = {}) {
   const affected = await orderModel.markOrderRefunded(order.order_sn);
   if (affected === -1) {
     throw new Error('退款已在微信侧成功，但订单状态更新失败，请人工核对订单号 ' + order.order_sn);
+  }
+
+  // v1.7.9：写退款流水——此前退款只改订单状态，退了多少/何时退的/到账没到，本地一概查不到
+  // 流水写入失败不阻断退款主流程（钱已经在微信侧退了），后台可点「同步」补记
+  try {
+    await payModel.savePayRecord(
+      payModel.buildPayRecordFromRefund(order, wxResult, {
+        outRefundNo: genRefundNo(order.order_sn),
+        refundFee: refundFee / 100,
+        source: 'refund',
+      })
+    );
+  } catch (e) {
+    console.error('[refund] 退款流水写入失败:', order.order_sn, e.message);
   }
 
   // v1.7.3：退款成功后把券退回账户（券有效期已过则不退回，避免留下用不了的脏券）

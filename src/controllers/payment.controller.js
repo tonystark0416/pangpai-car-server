@@ -6,6 +6,7 @@ const config = require('../config');
 const work = require('../services/wechat/work');
 const orderModel = require('../models/order.model');
 const refundService = require('../services/refund.service');
+const payModel = require('../models/pay.model');
 
 const wechatPay = new WechatPayV2(config.wxPay);
 
@@ -174,6 +175,14 @@ class PaymentController {
         }
         if (affected === 0) {
           console.log('[pay-callback] 订单已支付，幂等跳过:', result.out_trade_no);
+        }
+
+        // 4.1 v1.7.9：写支付流水（幂等 upsert，重复通知不会产生重复流水）
+        // 流水写入失败**不影响**应答——订单状态已落库，流水可在后台点「同步」补回来
+        try {
+          await payModel.savePayRecord(payModel.buildPayRecordFromPay(order, result, 'callback'));
+        } catch (e) {
+          console.error('[pay-callback] 支付流水写入失败:', result.out_trade_no, e.message);
         }
 
         // 5. 企微通知员工（新订单）

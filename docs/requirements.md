@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.7.8 ｜ 日期：2026-11-02 ｜ 状态：迭代中
+> 版本：v1.7.9 ｜ 日期：2026-11-02 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -84,6 +84,8 @@ pangpai-car/
 │   ├── migrate_car_fee_fields.js              # v1.6.18 车辆整备费/保险费字段
 │   ├── migrate_order_clean_price_position.js  # v1.6.19 订单字段顺序调整
 │   ├── migrate_coupon.js                      # v1.7.3 优惠券两张表 + 订单 4 列
+│   ├── migrate_car_detail_fields.js           # v1.7.6 车辆 images/tags/config JSON 列
+│   └── migrate_pay_record.js                  # v1.7.9 支付流水表（--backfill 回填历史）
 │   ├── gen_docs_toc.js                        # v1.7.3 文档目录生成/校验（见下）
 │   └── sort_changelog.js                      # v1.7.3 Change Log 按版本号排序（见下）
 ├── https/                       # SSL 证书（不入库）
@@ -127,6 +129,7 @@ pangpai-car/
     │   ├── car.model.js         # pp_car
     │   ├── order.model.js       # pp_order
     │   ├── coupon.model.js      # v1.7.3 pp_coupon / pp_user_coupon
+    │   ├── pay.model.js         # v1.7.9 pp_pay_record（支付/退款流水，幂等 upsert）
     │   └── admin.model.js       # 后台列表 / 统计 / 导出
     ├── services/                # 第三方服务与领域服务
     │   ├── pricing.service.js   # 计价唯一真源（含 v1.7.3 券抵扣）
@@ -136,7 +139,7 @@ pangpai-car/
     │   └── wechat/
     │       ├── miniprogram.js   # token / jscode2session / getPhoneNumber / OCR / 小程序码
     │       ├── work.js          # 企业微信通知
-    │       └── pay.js           # 微信支付 V2（下单 / 查单 / 退款）
+    │       └── pay.js           # 微信支付 V2（下单 / 查单 / 退款 / v1.7.9 退款查询）
     ├── middlewares/
     │   ├── asyncHandler.js      # async 路由异常包装器
     │   ├── adminAuth.js         # 后台 JWT 校验
@@ -450,7 +453,51 @@ total_price                                     // 保持原价不变，GMV/报�
 > ```
 > 转换后无需改代码/环境变量（默认路径即生效），只需 `pm2 restart pangpaicar`。pem 含私钥，**不要提交进 git**（`src/data/` 已在 `.gitignore` 中）。
 
-**回调处理流程（v1.5.0 起闭环）**：验签 → 订单存在性核验 → **金额核验**（回调 total_fee vs 订单 total_price×100）→ **落库**（`pay_status=1`、`transaction_id`、`pay_time`，`WHERE pay_status=0` 保证幂等）→ 企业微信通知员工 → 应答 SUCCESS。验签失败/订单不存在/金额不一致/DB 异常应答 FAIL（微信按 15s/1m/…策略重推）；重复通知幂等跳落后仍应答 SUCCESS。
+**回调处理流程（v1.5.0 起闭环）**：验签 → 订单存在性核验 → **金额核验**（回调 total_fee vs 订单 total_price×100）→ **落库**（`pay_status=1`、`transaction_id`、`pay_time`，`WHERE pay_status=0` 保证幂等）→ 写支付流水（v1.7.9）→ 企业微信通知员工 → 应答 SUCCESS。验签失败/订单不存在/金额不一致/DB 异常应答 FAIL（微信按 15s/1m/…策略重推）；重复通知幂等跳落后仍应答 SUCCESS。
+
+#### 支付流水与后台支付管理（v1.7.9）
+
+**诉求**：运营要看任意一笔支付/退款的明细，不必登录微信支付后台。
+
+**此前的数据缺口（这是本模块真正的瓶颈）**：支付只记了 `pp_order.transaction_id` + `pay_time`；**退款完全没有流水**——`markOrderRefunded` 只把状态改成「已退款」，退了多少、什么时候退的、微信 `refund_id`、到账没到，本地一概查不到。所以顺序是**先补流水数据，再做界面**。
+
+**表设计**：新建 `pp_pay_record`，**支付与退款共用一张表**，`record_type` 区分（1支付 / 2退款），差异字段存 `raw`(JSON)（微信原始返回，将来扩字段不必改表）。幂等键：`(record_type, out_trade_no)` 与 `out_refund_no`——**流水只追加，重复回调/重复同步不会产生重复行**。
+
+| 字段 | 说明 |
+|---|---|
+| `amount` | 支付=实付（微信 `total_fee`），退款=退款额（`refund_fee_0`） |
+| `status` / `status_text` | 微信状态原值与中文（支付 `SUCCESS`/`REFUND`/`NOTPAY`…；退款 `SUCCESS`/`PROCESSING`/`CHANGE`…） |
+| `bank_type` | 付款银行 |
+| `fund_change` | `Y` 即时到账（零钱）/ `N` 银行卡异步——**退款到银行卡是异步的，本地必须有这个字段才知道钱还在路上** |
+| `source` | `callback` 回调 / `check` 查单兜底 / `manual` 后台同步 / `refund` 退款 / `backfill` 历史回填。一眼看出这笔流水是怎么来的 |
+
+**写入时机（三处埋点，口径统一到 `pay.model`）**：
+
+| 时机 | source | 说明 |
+|---|---|---|
+| 支付回调落库成功 | `callback` | 流水写入失败**不影响应答**（订单已落库，后台可点「同步」补回来） |
+| 查单兜底补单成功 | `check` | 复用 v1.7.8 的 `checkPendingPayments` |
+| 退款成功 | `refund` | 钱已在微信侧退，流水写失败也不阻断主流程 |
+
+**新增微信接口**：`/pay/refundquery` 退款查询（`pay.js.refundQuery`，不需要证书）。四个标识四选一，本项目传 `out_trade_no` + `out_refund_no`。**V2 对单笔退款返回 `xxx_0` 形式**（`refund_status_0`/`refund_id_0`/`refund_fee_0`/`refund_success_time_0`），模型内用 `pickRefund()` 兼容带后缀与不带后缀两种返回。
+
+**后台接口**（`/admin-api`，JWT）：
+
+| 接口 | 说明 |
+|---|---|
+| `GET /pay-records` | 列表：类型/状态/关键词（订单号·微信单号·退款单号·手机号）/时间范围筛选 + 收款退款汇总 |
+| `GET /pay-records/:id` | 详情，含 `raw` 微信原始返回 |
+| `POST /pay-records/:id/sync` | **手动同步**：支付调 `orderquery`、退款调 `refundquery`，写回最新状态 |
+| `GET /pay-records/export` | 导出 Excel（与列表同源筛选，≤20000 条） |
+| `GET /orders/:orderSn/pay-records` | 某订单的资金流水（订单详情内嵌） |
+
+**设计原则**：**本地库为主，微信侧只作核对源**。列表/详情直接读本地表（秒开、可筛选），只有人点「同步」才调微信——既不限频，也不会因为微信抖动导致页面打不开。**后台同步只更新流水，不改订单状态**：订单状态归属回调与查单兜底，避免两条口径打架。
+
+**统计口径**：收款 = 支付流水中 `status IN (SUCCESS, REFUND)` 的金额（`REFUND` 表示曾收过款后来退了，不能算 0）；净收入 = 收款 − 退款，**为负数说明退得比收的多，属异常需人工核对**。
+
+**历史数据**：`node scripts/migrate_pay_record.js --backfill` 用查单/退款查询回填 `pay_status IN (1,2)` 的历史订单（本次回填 12 条）。
+
+**回填顺带做一次全量对账**：对所有已支付订单都查退款，**只传 `out_trade_no`**——传 `out_refund_no`（我们的 `R+订单号` 规则）查不到**在微信商户平台手工退的款**（那种退款单号由微信自动生成）。若发现「微信侧已退款但库内 `pay_status≠2`」，脚本打印 `⚠️ 不一致` 并给出修正 SQL，**不自动改库**。本次就是靠它发现了 `PP20261011204940`（详见 Change Log v1.7.9）。
 
 ### 2.4 运营管理
 
@@ -645,6 +692,7 @@ npm run task:paycheck        # 常驻（本地调试用，线上交给 PM2）
 
 | 版本 | 日期 | 变更内容 | 备注 |
 |---|---|---|---|
+| v1.7.9 | 2026-11-02 | **支付流水 + 后台支付管理（不用登微信后台看流水）**：① 新建 `pp_pay_record` 流水表（`scripts/migrate_pay_record.js` 幂等建表，`--backfill` 回填历史）——**支付与退款共用一张表**，`record_type` 区分，差异字段存 `raw`(JSON)，幂等键 `(record_type,out_trade_no)` 与 `out_refund_no`；② 新增微信接口 **`/pay/refundquery` 退款查询**（`pay.js.refundQuery`，不需证书，兼容 V2 的 `xxx_0` 返回形式）；③ **三处埋点**写流水：支付回调 `callback`、查单兜底 `check`、退款成功 `refund`，写入失败均不阻断主流程；④ 后台接口：流水列表（类型/状态/关键词/时间筛选 + 收款退款汇总）、详情（含微信原始返回）、**手动同步**（支付调查单、退款调退款查询）、导出 Excel、按订单查资金流水；⑤ 后台新增「支付管理」页（收款/退款/净收入三个统计卡片 + 抽屉详情 + raw 展示） | **此前的数据缺口**：退款完全没有流水（`markOrderRefunded` 只改状态），退了多少/何时退的/到账没到本地一概查不到。设计原则：**本地库为主，微信侧只作核对源**，列表不实时调微信（避免慢与限频），人点「同步」才调。**后台同步只更新流水、不改订单状态**，避免与回调/兜底两条口径打架。统计口径：收款含 `SUCCESS` 与 `REFUND`（曾收过款后来退了，不能算 0），净收入=收款−退款，为负需人工核对。实测：回填 11 条历史流水（支付 6 / 退款 5）；列表、筛选（类型/关键词/时间范围）、详情、手动同步（支付与退款各一次，均返回最新状态）、导出 xlsx 全部通过；订单 `PP20261017215847` 显示「支付 301 → 退款 301」完整链路。⚠️ **回填时发现并已修正一处真实数据不一致**：订单 `PP20261011204940`（￥7）库内 `pay_status=1 已支付`，但微信查单 `trade_state=REFUND`。用我们自己的 `R+订单号` 查退款返回 `REFUNDNOTEXIST`，**改为只传 `out_trade_no` 查到真实退款**：`out_refund_no=6561289372026101176676335681791724444`（一串微信自动生成的数字，非我们的规则）、`refund_id=50300808922026101140272815535`、￥7、`SUCCESS`、2026-10-11 21:14:36 退到「支付用户零钱」——**该笔是在微信商户平台手工退的，未走我们的接口**，故本地既无流水、订单状态也没变。经用户确认后已修正：补记退款流水 + `markOrderRefunded` 置 `pay_status=2`（净收入口径由 7 归零，收款 968 = 退款 968）。据此改造回填脚本：**对所有已支付订单都查退款（不传 `out_refund_no`，否则用我们的规则查不到手工退款）**，发现「微信已退款但库内 `pay_status≠2`」时打印 `⚠️ 不一致` 告警并给出修正 SQL，**脚本本身不自动改订单状态**——动钱的事必须人工确认。重跑验证幂等（仍 12 条、无新增告警）。admin-web 构建通过 |
 | v1.7.8 | 2026-11-02 | **支付查单兜底（资金安全第二道保险）**：① 新增定时任务 `src/tasks/checkPendingPayments.js`（PM2 应用 `pangpai-paycheck`，启动即跑一轮 + 每 2 分钟一轮），扫「未支付且未取消、账龄 3 分钟~24 小时」的订单 → 调微信 `/pay/orderquery` → 微信侧 `trade_state=SUCCESS` 则**复用回调同一落库路径** `markOrderPaid` 补写订单状态，并补发企微通知（标注「支付回调补单」）；② `order.model` 新增 `listUnpaidOrders`（窗口 + 上限可控）；③ `ecosystem.config.cjs` 新增 `pangpai-paycheck` 应用，`package.json` 新增 `task:paycheck` / `task:paycheck:once`（单轮 dry-run） | **为什么要做**：订单支付状态唯一真源是微信回调，回调因网络抖动/部署重启丢失时会出现「钱付了、订单仍待支付」——资金与客诉风险。此前 `src/tasks` 只有 token 刷新，无任何查单兜底。安全边界：金额核验与回调同口径（对不上**绝不落库**）、落库幂等、单条失败不影响整轮、只扫 24h 内未取消订单。实测：用真实订单号验证微信查单返回字段（`return_code`/`result_code`/`trade_state`/`total_fee`，未支付时无 `transaction_id`/`time_end`）；六个分支单测全通（通信失败/ORDERNOTEXIST/NOTPAY→跳过，金额不符→拒绝落库，金额符→补单成功，dry-run→不落库）；三种启动模式（单轮/dry-run/常驻）均正常。⚠️ 联调时用例 5 曾真实写入一笔生产订单 `PP20261018170534` 的支付状态，**已还原**（`pay_status=0`/`transaction_id=NULL`/`pay_time=NULL`，待支付总数仍为 40）。本地环境企微通知因 IP 白名单被拒（errcode 60020），已 try/catch 不影响主流程，**服务器需确认企微可信 IP 已配置** |
 | v1.7.7 | 2026-11-02 | **优惠券「已过期」状态——用派生状态，不落库**：① `pp_coupon` / `pp_user_coupon` **不动表结构**，新增只读派生状态：用户券 `state`（`usable`/`not_start`/**`expired`**/`used`/`invalid`）+ `state_text`；批次 `runtime_status`（`not_start`/`active`/**`claim_ended` 已停止领取**/**`ended` 已结束**/`discarded`）+ `runtime_status_text`。判定集中在 `coupon.model` 的 `deriveUserCouponState` / `deriveCouponRuntimeStatus`，以服务端当前时间为准；② **虚拟状态筛选**：接口 `status` 参数同时接受数字与字符串，`expired` 翻译为 `status=0 AND use_end_time < NOW()` 等，**旧数字值完全兼容**；③ C 端券包默认仍返回过期券（**保留置灰**），服务端按「可用在前、临期优先，过期与终态靠后」排序；④ 后台批次列表状态列显示派生状态（与库内 `status` 不一致时补注「（库内：活动中）」避免运营困惑），筛选下拉增加「已结束（过期）/ 已停止领取」；⑤ 领券记录页状态列显示「已过期」，筛选增加 可用/未生效/已过期，统计卡片新增**「已过期张数」「过期未核销金额」** | **设计取舍**：过期是时间的函数而非动作，写进 status 需定时任务翻转（多一个要盯的进程），且会覆盖「过期前是未使用还是被作废」这一信息——财务复盘要的正是这个区分，故**不引入定时任务**。实测 9 项全通：批次 `CP2026102697RDZE`（使用期 10-27 已过）正确派生为「已结束」，虚拟筛选 `ended`=1、`active`=1、旧值 `status=1`=2（兼容）；用户券 uid=250 已过期券 `state=expired`、`usable=false`；领券记录 summary 新增 `expired=2 / expiredAmount=40`；C 端筛 `expired`=1、`usable`=0、旧值 `status=0`=1。admin-web 构建通过 |
 | v1.7.6 | 2026-11-01 | **车辆详情页数据层（轮播图 / 标签 / 配置参数）**：① `pp_car` 新增三个 JSON 列 —— `images`（轮播图数组，最多 8 张，第 1 张为列表与详情主图）、`tags`（标签数组，最多 6 个，单条 ≤10 字）、`config`（配置参数键值对，最多 20 项），迁移脚本 `scripts/migrate_car_detail_fields.js`（幂等、先建库内备份表、中文注释显式 `SET NAMES utf8mb4`、并把 24 辆存量车的 `image_url` 回填为 `images` 第 1 张）；② 新增 `src/services/car.service.js` 统一做三个字段的**归一化**（后台写入与 C 端读取共用，脏数据/非法 URL/超量/重复全部收敛），C 端 `/getCarList`、`/getCarInfo` 与后台车辆列表均返回归一化结果，`images` 为空时自动回退 `[image_url]`；③ 后台车辆 CRUD 支持这三个字段，**更新采用动态 SET——只更新 payload 里显式传了的字段**（列表页「排序值即时保存」等整行提交不会误清空运营已录入内容）；保存时若传了 `images`，自动把 `image_url` 同步为 `images[0]`；④ `admin-web` 车辆表单新增：多图上传（≤5MB/张，缩略图列表 + 删除 + 「设为主图」）、标签动态添加/删除、配置参数键值对增删 | 面向小程序**车辆详情页**（列表页与结算页之间）。**用户评价本期不做**（库内无评价表，下一版再建 `pp_car_review`）。实测 6 项全通：创建带 2 图/2 标签/2 配置的测试车 → C 端详情正确返回；整行更新（不带这三个字段）后内容**未被清空**；改为 1 标签 + 空配置后正确落库；主图自动同步为 `images[0]`；逗号串与非法 URL 等脏入参被正确过滤；测试车已删除（车辆总数 24→25→24）。admin-web 构建通过 |
