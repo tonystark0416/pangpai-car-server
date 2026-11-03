@@ -68,5 +68,8 @@ router.get('/pay-records/:id', asyncHandler(pay.detail));
 router.post('/pay-records/:id/sync', asyncHandler(pay.sync));
 // 某订单的资金流水（订单详情内嵌）
 router.get('/orders/:orderSn/pay-records', asyncHandler(pay.listByOrder));
+// 每日对账（v1.7.11）：微信账单 vs 本地流水核对
+router.get('/reconcile', asyncHandler(pay.reconcileList));
+router.post('/reconcile/run', asyncHandler(pay.reconcileRun));
 
 module.exports = router;

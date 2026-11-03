@@ -42,6 +42,7 @@ const SOURCE_TEXT = {
   manual: '后台同步',
   refund: '退款',
   backfill: '历史回填',
+  reconcile: '每日对账补录',
 };
 
 /**
@@ -372,6 +373,31 @@ async function listExport(q = {}) {
   }
 }
 
+/**
+ * 某一天的本地流水（v1.7.11，每日对账用）
+ * 按 trade_time（微信侧时间）归属日期——与微信账单「记账时间」同口径
+ * @param {string} date 'YYYY-MM-DD'
+ * @returns {Promise<Array>} 原始行（含 out_trade_no / out_refund_no / amount / record_type）
+ */
+async function listByTradeDate(date) {
+  const db = new MySQL();
+  try {
+    const rows = await db.query(
+      `SELECT r.id, r.record_type, r.order_sn, r.out_trade_no, r.out_refund_no,
+              r.amount, r.status, r.source, r.trade_time
+       FROM pp_pay_record r
+       WHERE r.trade_time >= ? AND r.trade_time < DATE_ADD(?, INTERVAL 1 DAY)`,
+      [`${date} 00:00:00`, `${date} 00:00:00`]
+    );
+    return rows || [];
+  } catch (error) {
+    console.error('[pay-record] listByTradeDate error:', error.message);
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
 module.exports = {
   RECORD_TYPE,
   RECORD_TYPE_TEXT,
@@ -387,4 +413,5 @@ module.exports = {
   getPayRecordById,
   listByOrderSn,
   listExport,
+  listByTradeDate,
 };

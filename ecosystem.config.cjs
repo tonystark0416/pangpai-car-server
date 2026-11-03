@@ -36,6 +36,24 @@ module.exports = {
       time: true,
     },
     {
+      // 每日对账（v1.7.11，每天 09:30 跑前一天的账单核对）
+      // 微信账单 T+1 生成（凌晨可能仍 Bill Creating），所以定在 09:30；
+      // 跑完即退出（autorestart:false），到点由 cron_restart 拉起
+      name: 'pangpai-reconcile',
+      script: './src/tasks/dailyReconcile.js',
+      cwd: __dirname,
+      autorestart: false,
+      cron_restart: '0 30 9 * * *',
+      max_memory_restart: '200M',
+      env: {
+        NODE_ENV: 'production',
+      },
+      out_file: './logs/reconcile-out.log',
+      error_file: './logs/reconcile-error.log',
+      merge_logs: true,
+      time: true,
+    },
+    {
       // access_token 定时刷新任务（启动即刷一次 + 每小时整点）
       // v1.6.5 起纳入 PM2 托管，避免终端临时进程退出后 token 过期
       name: 'pangpai-token',

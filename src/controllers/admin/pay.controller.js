@@ -11,6 +11,8 @@ const ExcelJS = require('exceljs');
 const dayjs = require('dayjs');
 const payModel = require('../../models/pay.model');
 const orderModel = require('../../models/order.model');
+const reconcileModel = require('../../models/reconcile.model');
+const reconcileService = require('../../services/reconcile.service');
 const WechatPayV2 = require('../../services/wechat/pay');
 const config = require('../../config');
 
@@ -169,4 +171,35 @@ async function exportRecords(req, res) {
   res.end();
 }
 
-module.exports = { list, detail, sync, listByOrder, exportRecords };
+// ─── 每日对账（v1.7.11）──────────────────────────────────────────
+
+/**
+ * 对账结果列表（含差异明细）
+ * GET /reconcile?page=&pageSize=
+ */
+async function reconcileList(req, res) {
+  const { page, pageSize } = req.query;
+  const data = await reconcileModel.listResults({ page, pageSize });
+  res.json({ code: 0, msg: 'success', data });
+}
+
+/**
+ * 手动对账某一天（微信账单 T+1 生成，只能对已生成的历史日期）
+ * POST /reconcile/run  body: { date: 'YYYY-MM-DD' }
+ * 注意：会真实调微信下载账单，并可能自动补录漏掉的流水
+ */
+async function reconcileRun(req, res) {
+  const { date } = req.body || {};
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) {
+    return res.json({ code: 400, msg: '日期格式应为 YYYY-MM-DD' });
+  }
+  // 账单 T+1：当天及未来的日期直接拒绝，避免运营误操作
+  const today = dayjs().format('YYYY-MM-DD');
+  if (String(date) >= today) {
+    return res.json({ code: 400, msg: '账单 T+1 生成，只能对账今天之前的日期' });
+  }
+  const data = await reconcileService.reconcileDate(date);
+  res.json({ code: 0, msg: data.message, data });
+}
+
+module.exports = { list, detail, sync, listByOrder, exportRecords, reconcileList, reconcileRun };

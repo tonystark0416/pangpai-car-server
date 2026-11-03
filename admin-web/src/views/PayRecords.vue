@@ -1,5 +1,7 @@
 <template>
   <div>
+    <el-tabs v-model="activeTab">
+    <el-tab-pane label="支付流水" name="records">
     <!-- 统计卡片：一眼看清收了多少、退了多少 -->
     <el-row :gutter="12" class="stat-row">
       <el-col :span="5">
@@ -114,6 +116,69 @@
         v-model:current-page="query.page" v-model:page-size="query.pageSize" @current-change="load"
         @size-change="load" />
     </el-card>
+    </el-tab-pane>
+
+    <!-- 每日对账：微信账单（资金真源）vs 本地流水的逐日核对 -->
+    <el-tab-pane label="每日对账" name="reconcile">
+      <el-card>
+        <div class="toolbar">
+          <el-date-picker v-model="rcDate" type="date" value-format="YYYY-MM-DD" placeholder="选择对账日期"
+            :disabled-date="(d) => d.getTime() >= Date.now()" style="width: 160px" />
+          <el-button type="primary" :loading="rcRunning" @click="runReconcile">立即对账</el-button>
+          <span class="sub-fee">账单 T+1 生成（凌晨可能仍在生成中），每天 09:30 自动对账前一天</span>
+        </div>
+
+        <el-table :data="rcRows" v-loading="rcLoading" stripe>
+          <el-table-column label="对账日期" width="120">
+            <template #default="{ row }">{{ (row.bill_date || '').slice(0, 10) }}</template>
+          </el-table-column>
+          <el-table-column label="结果" width="110">
+            <template #default="{ row }">
+              <el-tag :type="rcStatusType(row.status)" size="small">{{ row.status_text }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="微信账单（支付/退款）" width="170">
+            <template #default="{ row }">
+              {{ row.wx_pay_count }} 笔 ￥{{ fmtMoney(row.wx_pay_amount) }} /
+              {{ row.wx_refund_count }} 笔 ￥{{ fmtMoney(row.wx_refund_amount) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="本地流水（支付/退款）" width="170">
+            <template #default="{ row }">{{ row.local_pay_count }} 笔 / {{ row.local_refund_count }} 笔</template>
+          </el-table-column>
+          <el-table-column prop="diff_count" label="差异数" width="80" />
+          <el-table-column prop="fixed_count" label="已自动补录" width="100" />
+          <el-table-column prop="message" label="说明" min-width="200">
+            <template #default="{ row }">
+              <span class="sub-fee">{{ row.message }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="160" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="runReconcile(row.bill_date)">重新对账</el-button>
+              <el-button v-if="row.diff_count > 0" link type="warning" @click="showDiff(row)">差异明细</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-pagination class="pager" layout="total, prev, pager, next" :total="rcTotal"
+          v-model:current-page="rcQuery.page" v-model:page-size="rcQuery.pageSize" @current-change="loadReconcile" />
+      </el-card>
+    </el-tab-pane>
+    </el-tabs>
+
+    <!-- 差异明细弹窗 -->
+    <el-dialog v-model="diffVisible" title="对账差异明细" width="640px">
+      <el-alert v-if="diffRow" :title="diffRow.bill_date && diffRow.bill_date.slice(0, 10) + '：' + diffRow.message"
+        :type="diffRow.status === 2 ? 'warning' : 'info'" :closable="false" style="margin-bottom: 12px" />
+      <el-table :data="diffItems" size="small" max-height="380">
+        <el-table-column prop="type_text" label="类型" width="170" />
+        <el-table-column label="订单/退款单号" width="180">
+          <template #default="{ row }">{{ row.order_sn || row.out_refund_no || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="msg" label="说明" min-width="220" />
+      </el-table>
+    </el-dialog>
 
     <!-- 详情抽屉：含微信原始返回，便于逐字段核对 -->
     <el-drawer v-model="detailVisible" title="流水详情" size="600px">
@@ -162,6 +227,18 @@ const detail = ref({});
 
 const query = reactive({ page: 1, pageSize: 20, record_type: '', status: '', keyword: '' });
 const summary = reactive({ payCount: 0, payAmount: 0, refundCount: 0, refundAmount: 0, netAmount: 0 });
+
+// 每日对账（v1.7.11）
+const activeTab = ref('records');
+const rcRows = ref([]);
+const rcTotal = ref(0);
+const rcQuery = reactive({ page: 1, pageSize: 10 });
+const rcDate = ref(null);
+const rcLoading = ref(false);
+const rcRunning = ref(false);
+const diffVisible = ref(false);
+const diffRow = ref(null);
+const diffItems = computed(() => (diffRow.value && diffRow.value.diff_detail && diffRow.value.diff_detail.items) || []);
 
 /**
  * 状态筛选项：支付与退款的状态集合不同（微信 trade_state / refund_status），
@@ -286,7 +363,54 @@ async function exportExcel() {
   }
 }
 
-onMounted(load);
+/** 对账状态配色：绿=一致，黄=有差异，红=对账失败（账单没拿到，可重跑） */
+function rcStatusType(status) {
+  return { 1: 'success', 2: 'warning', 3: 'danger' }[Number(status)] || 'info';
+}
+
+async function loadReconcile() {
+  rcLoading.value = true;
+  try {
+    const data = await api.get('/reconcile', { params: rcQuery });
+    rcRows.value = data.list;
+    rcTotal.value = data.total;
+  } finally {
+    rcLoading.value = false;
+  }
+}
+
+/**
+ * 手动对账：会真实调微信下载账单，并可能自动补录漏掉的流水；
+ * 指定 bill_date 为「重新对账」某天，否则用日期选择器的值
+ */
+async function runReconcile(date) {
+  const target = typeof date === 'string' ? date : rcDate.value;
+  if (!target) {
+    ElMessage.warning('请先选择对账日期');
+    return;
+  }
+  rcRunning.value = true;
+  try {
+    const data = await api.post('/reconcile/run', { date: target });
+    ElMessage.success(data.msg || '对账完成');
+    rcQuery.page = 1;
+    await loadReconcile();
+  } catch (e) {
+    /* 拦截器已提示错误 */
+  } finally {
+    rcRunning.value = false;
+  }
+}
+
+function showDiff(row) {
+  diffRow.value = row;
+  diffVisible.value = true;
+}
+
+onMounted(() => {
+  load();
+  loadReconcile();
+});
 </script>
 
 <style scoped>

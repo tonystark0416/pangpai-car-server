@@ -340,6 +340,138 @@ class WechatPayV2 {
             params
         );
     }
+
+    /**
+     * 发送请求并返回**原始响应文本**（v1.7.11，供下载对账单使用）
+     *
+     * 现有 request() 会把响应喂给 XML 解析器，但「下载对账单」正常时返回的是
+     * **CSV 文本**（tab 分隔），不是 XML——走 request() 会直接解析失败。
+     * 这里返回原文，由调用方判断内容形态（`<xml` 开头 = 出错/无账单）。
+     */
+    async requestRaw(url, params, timeout = 60000) {
+        const sign = this.generateSign(params);
+        const xmlData = this.buildXml({ ...params, sign });
+        const response = await axios.post(url, xmlData, {
+            headers: { 'Content-Type': 'text/xml' },
+            timeout,
+            // arraybuffer 再转字符串，避免 axios 按错误编码猜
+            responseType: 'arraybuffer',
+        });
+        return Buffer.from(response.data).toString('utf8');
+    }
+
+    /**
+     * 下载对账单（v1.7.11）
+     * https://api.mch.weixin.qq.com/pay/downloadbill
+     *
+     * @param {object} opt
+     * @param {string} opt.billDate  账单日期 YYYYMMDD（账单 T+1 生成，一般当天上午 10 点后可取前一天的）
+     * @param {string} [opt.billType] ALL（默认，含支付+退款）/ SUCCESS / REFUND
+     * @returns {Promise<string>} 原始响应文本：CSV（tab 分隔）或 XML（当天无账单等错误）
+     */
+    async downloadBill({ billDate, billType = 'ALL' }) {
+        if (!/^\d{8}$/.test(billDate)) {
+            throw new Error('billDate 格式必须为 YYYYMMDD');
+        }
+        const params = {
+            appid: this.config.appid,
+            mch_id: this.config.mchId,
+            nonce_str: this.generateNonceStr(),
+            bill_date: billDate,
+            bill_type: billType,
+        };
+        return await this.requestRaw(
+            'https://api.mch.weixin.qq.com/pay/downloadbill',
+            params
+        );
+    }
+
+    /**
+     * 解析对账单 CSV（v1.7.11）
+     *
+     * ⚠️ 实测格式（2026-11-04 用真实账单验证）：
+     *   - 分隔符是**逗号**不是 tab；文件带 BOM（\ufeff）
+     *   - 列名行以「交易时间」开头（老文档写的「记账时间」也能兼容）
+     *   - 数据行金额带 ` 前缀（微信防 Excel 转义符），需去掉
+     *   - 字段值含逗号时微信用双引号包裹（如商品名称），需引号感知解析
+     *   - 汇总区：空行后 `总交易单数,应结订单总金额,...` 一行列名 + 一行数值
+     *   - 当天无账单时整个响应是 XML（return_code=FAIL, error_code 20002；
+     *     账单 T+1 生成，凌晨可能返回 Bill Creating）
+     *   - 退款行的商户退款单号形如 RPP2026...（= R + 订单号，订单号本身 PP 开头）
+     *
+     * @param {string} raw downloadBill 的原始响应
+     * @returns {Promise<{rows: object[], summary: object|null, error: object|null}>}
+     */
+    async parseBill(raw) {
+        const text = String(raw || '').replace(/^\ufeff/, '').trim();
+
+        // XML = 出错（无账单 / 账单生成中）
+        if (text.startsWith('<xml')) {
+            const xml = await this.parseXml(text);
+            return { rows: [], summary: null, error: xml };
+        }
+
+        const lines = text.split(/\r?\n/);
+        const headerIdx = lines.findIndex((l) => /^(记账|交易)时间/.test(l.replace(/^\ufeff/, '')));
+        if (headerIdx === -1) {
+            return { rows: [], summary: null, error: { return_code: 'FAIL', return_msg: '账单格式异常：找不到列名行' } };
+        }
+
+        // 分隔符实测为逗号；留 tab 检测做兼容（万一微信改格式）
+        const delim = lines[headerIdx].includes('\t') ? '\t' : ',';
+        const headers = this.splitCsvLine(lines[headerIdx], delim).map((s) => s.trim());
+        const strip = (s) => String(s ?? '').replace(/^`/, '').trim();
+
+        const rows = [];
+        for (let i = headerIdx + 1; i < lines.length; i++) {
+            const line = lines[i];
+            if (!line.trim()) continue;            // 空行：账单数据与汇总区的分隔
+            if (/^总交易/.test(line)) break;       // 进入汇总区
+            const cells = this.splitCsvLine(line, delim).map(strip);
+            const row = {};
+            headers.forEach((h, idx) => { row[h] = cells[idx] ?? ''; });
+            rows.push(row);
+        }
+
+        // 汇总区（逗号分隔，同样带 ` 前缀）
+        let summary = null;
+        const sumIdx = lines.findIndex((l) => /^总交易/.test(l));
+        if (sumIdx !== -1 && lines[sumIdx + 1]) {
+            const keys = this.splitCsvLine(lines[sumIdx], ',').map((s) => strip(s));
+            const vals = this.splitCsvLine(lines[sumIdx + 1], ',').map((s) => strip(s));
+            summary = {};
+            keys.forEach((k, i) => { summary[k] = vals[i] ?? ''; });
+        }
+
+        return { rows, summary, error: null };
+    }
+
+    /**
+     * 引号感知的 CSV 行拆分（v1.7.11）
+     * 字段值含逗号/引号时微信用双引号包裹（如 "庞派,租车"），单纯 split(',') 会切错列
+     */
+    splitCsvLine(line, delim = ',') {
+        const out = [];
+        let cur = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (inQuotes) {
+                if (ch === '"') {
+                    if (line[i + 1] === '"') { cur += '"'; i++; } // 转义的 ""
+                    else inQuotes = false;
+                } else cur += ch;
+            } else if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === delim) {
+                out.push(cur); cur = '';
+            } else {
+                cur += ch;
+            }
+        }
+        out.push(cur);
+        return out;
+    }
 }
 
 module.exports = WechatPayV2;
