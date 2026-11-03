@@ -3,8 +3,14 @@
  */
 const adminModel = require('../../models/admin.model');
 const refundService = require('../../services/refund.service');
+const orderModel = require('../../models/order.model');
+const payModel = require('../../models/pay.model');
+const WechatPayV2 = require('../../services/wechat/pay');
+const config = require('../../config');
 const ExcelJS = require('exceljs');
 const dayjs = require('dayjs');
+
+const wechatPay = new WechatPayV2(config.wxPay);
 
 // 履约状态合法值
 const ORDER_STATUS = [0, 1, 2, 3, 4];
@@ -205,4 +211,109 @@ async function stats(req, res) {
   res.json({ code: 0, data: { ...data, recent7Days } });
 }
 
-module.exports = { list, detail, updateStatus, updateAddress, refund, exportOrders, stats };
+/**
+ * 核对微信支付状态（v1.7.10，**只读，不改任何数据**）
+ *
+ * 背景：订单 PP20261011204940 曾出现「库内已支付、微信侧已退款」——那笔是在微信商户平台
+ * 手工退的，没走我们的接口，本地既无流水、订单状态也没变。本接口让运营在订单详情里
+ * 一键对比本地与微信侧，及时发现这类不一致；改不改、怎么改仍由人工决定。
+ *
+ * 对比口径：
+ *   - 支付：微信 trade_state vs 本地 pay_status（SUCCESS/REFUND/NOTPAY/CLOSED…）
+ *   - 退款：微信侧出现退款痕迹时进一步查退款明细（**只传 out_trade_no**，
+ *     传我们自己的 R+订单号 规则会查不到商户平台手工退款，那是这次踩过的坑）
+ *   - 金额：微信 total_fee vs 订单实付（pay_amount ?? total_price）
+ */
+async function checkWxPay(req, res) {
+  const order = await orderModel.getOrderBySn(req.params.orderSn);
+  if (!order) {
+    return res.json({ code: 404, msg: '订单不存在' });
+  }
+
+  const local = {
+    pay_status: Number(order.pay_status),
+    pay_status_text: PAY_STATUS_TEXT[Number(order.pay_status)] || String(order.pay_status),
+    pay_amount: Number(order.pay_amount ?? order.total_price),
+    transaction_id: order.transaction_id || '',
+    pay_time: order.pay_time || null,
+  };
+
+  const issues = [];
+  let wxPay = null;
+  let wxRefund = null;
+
+  try {
+    const payRes = await wechatPay.orderQuery({ outTradeNo: order.order_sn });
+    if (payRes.result_code === 'SUCCESS') {
+      wxPay = {
+        trade_state: payRes.trade_state || '',
+        trade_state_text: payModel.PAY_STATUS_TEXT[payRes.trade_state] || payRes.trade_state || '',
+        total_fee: payRes.total_fee != null ? Number(payRes.total_fee) / 100 : null,
+        transaction_id: payRes.transaction_id || '',
+        time_end: payRes.time_end || '',
+        bank_type: payRes.bank_type || '',
+      };
+
+      // 状态对比：两边各是什么、对不对得上
+      const s = wxPay.trade_state;
+      if (s === 'SUCCESS' && local.pay_status === 0) {
+        issues.push('微信侧已支付成功，本地订单仍是「未支付」——回调可能丢失，查单兜底任务会自动补单，也可人工核对');
+      }
+      if (s === 'SUCCESS' && local.pay_status === 2) {
+        issues.push('微信侧支付成功，但本地已标记「已退款」——请核实是否真的退过款');
+      }
+      if (s === 'REFUND' && local.pay_status === 1) {
+        issues.push('微信侧已发生退款，但本地订单仍是「已支付」——常见于在微信商户平台手工退款，请人工确认后把订单置为已退款');
+      }
+      if ((s === 'CLOSED' || s === 'NOTPAY' || s === 'PAYERROR') && local.pay_status === 1) {
+        issues.push(`微信侧状态为「${wxPay.trade_state_text}」，但本地标记「已支付」——异常，请人工核对`);
+      }
+
+      // 金额对比（仅对「微信侧确实收过钱」的状态有意义）
+      if ((s === 'SUCCESS' || s === 'REFUND') && wxPay.total_fee != null && wxPay.total_fee !== local.pay_amount) {
+        issues.push(`金额不一致：微信实收 ${wxPay.total_fee} 元，订单实付 ${local.pay_amount} 元`);
+      }
+    } else {
+      issues.push(`微信查单未成功：${payRes.err_code || payRes.return_msg || '未知原因'}`);
+    }
+
+    // 微信侧有退款痕迹 → 查退款明细（含手工退款）
+    if (wxPay && wxPay.trade_state === 'REFUND') {
+      const rf = await wechatPay.refundQuery({ outTradeNo: order.order_sn });
+      if (rf.result_code === 'SUCCESS') {
+        const st = payModel.pickRefund(rf, 'refund_status');
+        wxRefund = {
+          refund_status: st,
+          refund_status_text: payModel.REFUND_STATUS_TEXT[st] || st || '',
+          refund_fee: payModel.pickRefund(rf, 'refund_fee') != null ? Number(payModel.pickRefund(rf, 'refund_fee')) / 100 : null,
+          out_refund_no: payModel.pickRefund(rf, 'out_refund_no') || '',
+          refund_id: payModel.pickRefund(rf, 'refund_id') || '',
+          refund_success_time: payModel.pickRefund(rf, 'refund_success_time') || '',
+          refund_recv_accout: payModel.pickRefund(rf, 'refund_recv_accout') || '',
+        };
+        if (local.pay_status !== 2) {
+          issues.push(`微信退款状态「${wxRefund.refund_status_text}」（￥${wxRefund.refund_fee}，${wxRefund.refund_success_time || '时间未知'}）——本地未标记已退款，需人工处理`);
+        }
+      } else {
+        issues.push(`微信退款查询未成功：${rf.err_code || rf.return_msg || '未知原因'}`);
+      }
+    }
+  } catch (e) {
+    issues.push(`微信接口调用失败：${e.message}`);
+  }
+
+  res.json({
+    code: 0,
+    data: {
+      order_sn: order.order_sn,
+      local,
+      wx_pay: wxPay,
+      wx_refund: wxRefund,
+      issues,
+      // 「一致」= 微信侧没提出任何问题（查单失败也视为不一致，让运营重试）
+      consistent: issues.length === 0,
+    },
+  });
+}
+
+module.exports = { list, detail, updateStatus, updateAddress, refund, exportOrders, stats, checkWxPay };

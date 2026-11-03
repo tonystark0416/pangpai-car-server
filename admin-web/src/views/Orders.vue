@@ -194,9 +194,32 @@
       </el-descriptions>
         <div class="detail-actions">
           <el-button type="primary" plain @click="openAddress(detail)">修改取车/还车地址</el-button>
+          <!-- v1.7.10：一键对比本地与微信侧，发现「商户平台手工退款」等不一致（只读，不改数据） -->
+          <el-button type="warning" plain :loading="wxChecking" @click="checkWxPay">核对微信支付状态</el-button>
           <el-button type="danger" plain :disabled="detail.pay_status != 1" @click="openRefund(detail)">
             退款
           </el-button>
+        </div>
+
+        <!-- 核对结果：一致显示成功，有差异逐条列出 -->
+        <div v-if="wxCheck" class="wx-check" :class="wxCheck.consistent ? 'is-ok' : 'is-warn'">
+          <div class="wx-check-title">
+            {{ wxCheck.consistent ? '✓ 本地与微信侧一致' : '⚠ 发现 ' + wxCheck.issues.length + ' 处不一致，需人工核对' }}
+          </div>
+          <div class="wx-check-row">
+            本地：{{ wxCheck.local.pay_status_text }}（实付 ￥{{ Number(wxCheck.local.pay_amount).toFixed(2) }}）
+          </div>
+          <div class="wx-check-row" v-if="wxCheck.wx_pay">
+            微信：{{ wxCheck.wx_pay.trade_state_text }}（￥{{ wxCheck.wx_pay.total_fee }}，{{ wxCheck.wx_pay.bank_type || '银行未知' }}）
+          </div>
+          <div class="wx-check-row" v-if="wxCheck.wx_refund">
+            退款：{{ wxCheck.wx_refund.refund_status_text }} ￥{{ wxCheck.wx_refund.refund_fee }}
+            → {{ wxCheck.wx_refund.refund_recv_accout || '到账账户未知' }}（{{ wxCheck.wx_refund.refund_success_time || '时间未知' }}）
+            <div class="wx-check-sub">退款单号 {{ wxCheck.wx_refund.out_refund_no || wxCheck.wx_refund.refund_id }}</div>
+          </div>
+          <ul v-if="wxCheck.issues.length" class="wx-check-issues">
+            <li v-for="(it, i) in wxCheck.issues" :key="i">{{ it }}</li>
+          </ul>
         </div>
       </div>
     </el-drawer>
@@ -276,6 +299,10 @@ const query = reactive({ page: 1, pageSize: 10, keyword: '', pay_status: '', ord
 const detailVisible = ref(false);
 const detail = ref(null);
 
+// v1.7.10 核对微信支付状态：结果块直接显示在详情抽屉里（只读接口，不会改任何数据）
+const wxChecking = ref(false);
+const wxCheck = ref(null);
+
 const statusVisible = ref(false);
 const statusForm = reactive({ id: null, order_status: 0 });
 
@@ -322,7 +349,23 @@ async function load() {
 
 async function openDetail(row) {
   detail.value = await api.get(`/orders/${row.id}`);
+  wxCheck.value = null; // 换了订单，上一单的核对结果不带走
   detailVisible.value = true;
+}
+
+/**
+ * 核对微信支付状态（v1.7.10）：只读调微信查单/退款查询与本地对比，
+ * 发现「商户平台手工退款」「回调丢失」等不一致时逐条提示，由人工决定怎么处理
+ */
+async function checkWxPay() {
+  wxChecking.value = true;
+  try {
+    wxCheck.value = await api.get(`/orders/${detail.value.order_sn}/check-wxpay`);
+  } catch (e) {
+    /* 拦截器已提示错误 */
+  } finally {
+    wxChecking.value = false;
+  }
 }
 
 const exporting = ref(false);
@@ -495,5 +538,40 @@ onMounted(load);
 .detail-actions {
   margin-top: 16px;
   text-align: right;
+}
+
+/* v1.7.10 核对微信支付状态结果块 */
+.wx-check {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.wx-check.is-ok {
+  background: #f0f9eb;
+  border: 1px solid #e1f3d8;
+  color: #67c23a;
+}
+.wx-check.is-warn {
+  background: #fdf6ec;
+  border: 1px solid #faecd8;
+  color: #b88230;
+}
+.wx-check-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.wx-check-row {
+  color: #606266;
+}
+.wx-check-sub {
+  font-size: 12px;
+  color: #909399;
+  word-break: break-all;
+}
+.wx-check-issues {
+  margin: 6px 0 0 18px;
+  color: #b88230;
 }
 </style>

@@ -57,6 +57,8 @@ router.get('/orders/:id', asyncHandler(order.detail));
 router.put('/orders/:id/status', asyncHandler(order.updateStatus));
 router.put('/orders/:id/address', asyncHandler(order.updateAddress));
 router.post('/orders/:id/refund', asyncHandler(order.refund));
+// 核对微信支付状态（v1.7.10，只读对比本地与微信侧，发现手工退款等不一致）
+router.get('/orders/:orderSn/check-wxpay', asyncHandler(order.checkWxPay));
 
 // 支付流水（v1.7.9）：后台直接看支付/退款明细，不用登微信支付后台
 // 导出须在 /pay-records/:id 之前注册，否则会被当作 id 匹配
