@@ -19,6 +19,13 @@ app.use('/images', express.static(config.upload.dir, {
   fallthrough: false,
 }));
 
+// 静态页面站点（v1.7.10）：public/ 目录，协议页等手机端 H5
+// 访问示例：/agreement/membership.html -> public/agreement/membership.html
+// 注意用默认 fallthrough：文件不存在会落到下方 404 路由（而非像 /images 那样抛 500）
+app.use(express.static(path.join(config.root, 'public'), {
+  maxAge: '10m',
+}));
+
 // 管理后台前端托管（方案B：https://pangpai-car.com/admin -> admin-web/dist）
 const adminDist = path.join(config.root, 'admin-web/dist');
 if (fs.existsSync(adminDist)) {
