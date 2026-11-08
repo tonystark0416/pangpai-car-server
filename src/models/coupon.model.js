@@ -62,6 +62,10 @@ const COUPON_RUNTIME_STATUS = {
   ENDED: 'ended',
   DISCARDED: 'discarded',
 };
+/** v1.7.12：有效期类型（1=固定时间段，2=领取后N小时可用） */
+const COUPON_VALID_TYPE = { FIXED: 1, RELATIVE: 2 };
+const COUPON_VALID_TYPE_TEXT = { 1: '固定时间段', 2: '领取后N小时可用' };
+
 const COUPON_RUNTIME_STATUS_TEXT = {
   not_start: '未开始',
   active: '活动中',
@@ -97,10 +101,17 @@ function deriveCouponRuntimeStatus(row, now = Date.now()) {
   const s = Number(row.status);
   if (s === COUPON_STATUS.DISCARDED) return COUPON_RUNTIME_STATUS.DISCARDED;
   if (s === COUPON_STATUS.NOT_START) return COUPON_RUNTIME_STATUS.NOT_START;
-  // status = 1 活动时，按两个时间窗口细分
+  // v1.7.12：相对有效期批次（领取后 N 小时可用）——批次状态只看领取窗口，
+  // 领取截止 = 批次结束（用户券各自的可用期按领券时刻快照自行过期，与批次无关）
+  const isRelative = Number(row.valid_type) === 2;
   const start = row.receive_start_time ? new Date(row.receive_start_time).getTime() : 0;
   const claimEnd = row.receive_end_time ? new Date(row.receive_end_time).getTime() : 0;
   const useEnd = row.use_end_time ? new Date(row.use_end_time).getTime() : 0;
+  if (isRelative) {
+    if (claimEnd && now > claimEnd) return COUPON_RUNTIME_STATUS.ENDED; // 领取截止 = 结束
+    if (start && now < start) return COUPON_RUNTIME_STATUS.NOT_START;
+    return COUPON_RUNTIME_STATUS.ACTIVE;
+  }
   if (useEnd && now > useEnd) return COUPON_RUNTIME_STATUS.ENDED; // 使用期已过 = 真正结束
   if (claimEnd && now > claimEnd) return COUPON_RUNTIME_STATUS.CLAIM_ENDED; // 领完了但还能用
   if (start && now < start) return COUPON_RUNTIME_STATUS.NOT_START;
@@ -118,12 +129,15 @@ const USER_COUPON_STATE_SQL = {
   used: 'u.status = 1',
   invalid: 'u.status = 2',
 };
-/** 批次：not_start / active / claim_ended / ended / discarded，以及原数字 0/1/2 */
+/** 批次：not_start / active / claim_ended / ended / discarded，以及原数字 0/1/2
+ *  v1.7.12：相对有效期（valid_type=2）批次状态只看领取窗口——领取截止即结束，无 claim_ended */
 const COUPON_RUNTIME_SQL = {
   not_start: '(status = 0 OR (status = 1 AND NOW() < receive_start_time))',
-  active: '(status = 1 AND NOW() BETWEEN receive_start_time AND receive_end_time AND NOW() <= use_end_time)',
-  claim_ended: '(status = 1 AND NOW() > receive_end_time AND NOW() <= use_end_time)',
-  ended: '(status = 1 AND NOW() > use_end_time)',
+  active:
+    '(status = 1 AND NOW() BETWEEN receive_start_time AND receive_end_time AND (valid_type = 2 OR NOW() <= use_end_time))',
+  claim_ended: '(status = 1 AND (valid_type IS NULL OR valid_type <> 2) AND NOW() > receive_end_time AND NOW() <= use_end_time)',
+  ended:
+    '(status = 1 AND ((valid_type = 2 AND NOW() > receive_end_time) OR ((valid_type IS NULL OR valid_type <> 2) AND NOW() > use_end_time)))',
   discarded: '(status = 2)',
 };
 
@@ -196,11 +210,17 @@ function round2(n) {
 async function createCoupon(p) {
   const db = new MySQL();
   const couponId = p.coupon_id || genCouponId();
+  // v1.7.12：有效期类型。相对有效期（2）批次上不配使用时间段，
+  // use_start/use_end 存领取窗口作兜底展示值（真实可用期领券时按快照生成）
+  const validType = Number(p.valid_type) === 2 ? 2 : 1;
+  const validHours = validType === 2 ? Number(p.valid_hours) : null;
+  const useStart = validType === 2 ? normalizeTime(p.receive_start_time) : normalizeTime(p.use_start_time);
+  const useEnd = validType === 2 ? normalizeTime(p.receive_end_time) : normalizeTime(p.use_end_time);
   const sql = `INSERT INTO pp_coupon
     (coupon_id,name,amount,threshold,total_stock,remain_stock,per_limit,use_per_limit,
-     receive_start_time,receive_end_time,use_start_time,use_end_time,
+     receive_start_time,receive_end_time,use_start_time,use_end_time,valid_type,valid_hours,
      scope_type,scope_car_ids,user_scope,bear_type,status)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`;
   try {
     const res = await db.query(sql, [
       couponId,
@@ -213,8 +233,10 @@ async function createCoupon(p) {
       Number(p.use_per_limit || 1),
       normalizeTime(p.receive_start_time),
       normalizeTime(p.receive_end_time),
-      normalizeTime(p.use_start_time),
-      normalizeTime(p.use_end_time),
+      useStart,
+      useEnd,
+      validType,
+      validHours,
       Number(p.scope_type || 1),
       p.scope_car_ids || null,
       Number(p.user_scope || 0),
@@ -254,10 +276,21 @@ async function updateCoupon(id, p) {
       return 0;
     }
 
+    // v1.7.12：有效期类型——改成相对类型必须同时给 valid_hours；批次 use_start/use_end 兜底为领取窗口
+    const validType = Number(p.valid_type ?? row.valid_type) === 2 ? 2 : 1;
+    const validHours = validType === 2 ? Number(p.valid_hours ?? row.valid_hours) : null;
+    const useStart = validType === 2
+      ? (normalizeTime(p.receive_start_time) ?? row.receive_start_time)
+      : (normalizeTime(p.use_start_time) ?? row.use_start_time);
+    const useEnd = validType === 2
+      ? (normalizeTime(p.receive_end_time) ?? row.receive_end_time)
+      : (normalizeTime(p.use_end_time) ?? row.use_end_time);
+
     await db.query(
       `UPDATE pp_coupon SET name=?, amount=?, threshold=?, total_stock=?, remain_stock=?,
        per_limit=?, use_per_limit=?, receive_start_time=?, receive_end_time=?,
-       use_start_time=?, use_end_time=?, scope_type=?, scope_car_ids=?, user_scope=?, bear_type=?
+       use_start_time=?, use_end_time=?, valid_type=?, valid_hours=?,
+       scope_type=?, scope_car_ids=?, user_scope=?, bear_type=?
        WHERE id = ?`,
       [
         p.name ?? row.name,
@@ -269,8 +302,10 @@ async function updateCoupon(id, p) {
         Number(p.use_per_limit ?? row.use_per_limit),
         normalizeTime(p.receive_start_time) ?? row.receive_start_time,
         normalizeTime(p.receive_end_time) ?? row.receive_end_time,
-        normalizeTime(p.use_start_time) ?? row.use_start_time,
-        normalizeTime(p.use_end_time) ?? row.use_end_time,
+        useStart,
+        useEnd,
+        validType,
+        validHours,
         Number(p.scope_type ?? row.scope_type),
         p.scope_car_ids !== undefined ? p.scope_car_ids : row.scope_car_ids,
         Number(p.user_scope ?? row.user_scope),
@@ -394,6 +429,9 @@ async function listReceiveable(uid) {
       receive_end_time: r.receive_end_time,
       use_start_time: r.use_start_time,
       use_end_time: r.use_end_time,
+      // v1.7.12：相对有效期信息（C 端可展示「领取后 N 小时内可用」）
+      valid_type: Number(r.valid_type) === 2 ? 2 : 1,
+      valid_hours: Number(r.valid_type) === 2 ? Number(r.valid_hours) : null,
       scope_type: Number(r.scope_type),
       remain_stock: Number(r.remain_stock),
       per_limit: Number(r.per_limit),
@@ -447,7 +485,20 @@ async function receiveCoupon(uid, couponId) {
       }
 
       // ③ 落用户券（快照面额与适用范围）
+      // v1.7.12：相对有效期（valid_type=2）——可用期按领券时刻生成：
+      // use_start_time = 领券时刻，use_end_time = 领券时刻 + valid_hours。
+      // 下游派生状态/筛选/核验只认这两个快照字段，与固定时间段券完全同构。
       const couponSn = genCouponSn();
+      let snapUseStart = row.use_start_time;
+      let snapUseEnd = row.use_end_time;
+      if (Number(row.valid_type) === 2 && Number(row.valid_hours) > 0) {
+        const fmt = (d) =>
+          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ` +
+          `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+        const now = new Date();
+        snapUseStart = fmt(now);
+        snapUseEnd = fmt(new Date(now.getTime() + Number(row.valid_hours) * 3600 * 1000));
+      }
       const res = await db.query(
         `INSERT INTO pp_user_coupon
          (coupon_sn,coupon_id,uid,name,amount,scope_type,scope_car_ids,use_start_time,use_end_time,status,receive_seq)
@@ -460,8 +511,8 @@ async function receiveCoupon(uid, couponId) {
           Number(row.amount),
           Number(row.scope_type),
           row.scope_car_ids,
-          row.use_start_time,
-          row.use_end_time,
+          snapUseStart,
+          snapUseEnd,
           USER_COUPON_STATUS.UNUSED,
           Number(countRow.n) + 1,
         ]
@@ -472,8 +523,8 @@ async function receiveCoupon(uid, couponId) {
         coupon_id: couponId,
         name: row.name,
         amount: Number(row.amount),
-        use_start_time: row.use_start_time,
-        use_end_time: row.use_end_time,
+        use_start_time: snapUseStart,
+        use_end_time: snapUseEnd,
       };
     } catch (inner) {
       // 领券后续失败 → 回滚库存
@@ -785,6 +836,8 @@ module.exports = {
   USER_COUPON_STATE_ORDER,
   COUPON_RUNTIME_STATUS,
   COUPON_RUNTIME_STATUS_TEXT,
+  COUPON_VALID_TYPE,
+  COUPON_VALID_TYPE_TEXT,
   deriveUserCouponState,
   deriveCouponRuntimeStatus,
   buildUserCouponStatusFilter,

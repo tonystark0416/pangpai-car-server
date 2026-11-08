@@ -4,7 +4,13 @@
  * 批次状态流转：未开始(0) → 活动中(1) → 已废弃(2)，已废弃不可逆；
  * 废弃时会连带把用户已领未用的券一并作废。
  */
+const dayjs = require('dayjs');
 const coupon = require('../../models/coupon.model');
+
+/** DATETIME 列（mysql2 返回 Date 对象）→ 'YYYY-MM-DD HH:mm'，用于 valid_text 展示 */
+function fmtShort(v) {
+  return v ? dayjs(v).format('YYYY-MM-DD HH:mm') : '';
+}
 
 /** 批次创建/编辑的参数校验（两侧共用） */
 function validateCouponInput(p, { partial = false } = {}) {
@@ -39,6 +45,24 @@ function validateCouponInput(p, { partial = false } = {}) {
     return '适用人群只能为 0（全部）/1（新用户）/2（老用户）';
   }
 
+  // v1.7.12：有效期类型——1 固定时间段（原有），2 领取后 N 小时可用
+  if (has('valid_type') && ![1, 2].includes(Number(p.valid_type))) {
+    return '有效期类型只能为 1（固定时间段）或 2（领取后N小时可用）';
+  }
+  const isRelative = Number(p.valid_type) === 2;
+  if (isRelative && (!partial || has('valid_hours'))) {
+    const hours = Number(p.valid_hours);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 8760) {
+      return '领取后可用时长必须为 1~8760 的整数小时';
+    }
+  }
+  if (!isRelative) {
+    if (!partial) {
+      // 创建固定时间段券时使用时间仍必填（原有口径）
+      if (!has('use_start_time') || !has('use_end_time')) return '固定时间段券必须填写使用起止时间';
+    }
+  }
+
   const pairs = [
     ['receive_start_time', 'receive_end_time', '领取'],
     ['use_start_time', 'use_end_time', '使用'],
@@ -57,16 +81,26 @@ function validateCouponInput(p, { partial = false } = {}) {
 async function list(req, res) {
   const { page = 1, pageSize = 10, name, status } = req.query;
   const data = await coupon.getCouponList({ page, pageSize, name, status });
-  const list = data.list.map((r) => ({
-    ...r,
-    amount: Number(r.amount),
-    status_text: coupon.COUPON_STATUS_TEXT[r.status],
-    // v1.7.7：派生状态——区分「已结束（使用期过了）」与「已停止领取（还能用）」
-    runtime_status: coupon.deriveCouponRuntimeStatus(r),
-    runtime_status_text: coupon.COUPON_RUNTIME_STATUS_TEXT[coupon.deriveCouponRuntimeStatus(r)],
-    scope_text: Number(r.scope_type) === 1 ? '全场通用' : '指定车辆',
-    bear_text: r.bear_type === 'platform' ? '平台承担' : r.bear_type,
-  }));
+  const list = data.list.map((r) => {
+    const validType = Number(r.valid_type) === 2 ? 2 : 1;
+    return {
+      ...r,
+      amount: Number(r.amount),
+      status_text: coupon.COUPON_STATUS_TEXT[r.status],
+      // v1.7.7：派生状态——区分「已结束（使用期过了）」与「已停止领取（还能用）」
+      runtime_status: coupon.deriveCouponRuntimeStatus(r),
+      runtime_status_text: coupon.COUPON_RUNTIME_STATUS_TEXT[coupon.deriveCouponRuntimeStatus(r)],
+      scope_text: Number(r.scope_type) === 1 ? '全场通用' : '指定车辆',
+      bear_text: r.bear_type === 'platform' ? '平台承担' : r.bear_type,
+      // v1.7.12：有效期类型展示
+      valid_type: validType,
+      valid_type_text: coupon.COUPON_VALID_TYPE_TEXT[validType],
+      valid_text:
+        validType === 2
+          ? `领取后 ${r.valid_hours} 小时内可用`
+          : `${fmtShort(r.use_start_time)} ~ ${fmtShort(r.use_end_time)}`,
+    };
+  });
   res.json({ code: 0, data: { list, total: data.total } });
 }
 

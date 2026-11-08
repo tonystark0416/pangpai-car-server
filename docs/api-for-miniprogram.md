@@ -426,8 +426,8 @@ async onGetPhone(e) {
 |---|---|
 | 方法 / 路径 | `GET /getCouponList` |
 | 参数 | `uid`（必填） |
-| 成功 | `{code:200, result:[{coupon_id, name, amount, remain_stock, per_limit, my_received, can_receive, receive_start_time, receive_end_time, use_start_time, use_end_time, scope_type}], total}` |
-| 说明 | 只返回**活动中**且在领取时间内的批次；`can_receive` 已综合「剩余库存 > 0」与「未达限领张数」，前端直接用它决定按钮能否点击 |
+| 成功 | `{code:200, result:[{coupon_id, name, amount, remain_stock, per_limit, my_received, can_receive, receive_start_time, receive_end_time, use_start_time, use_end_time, scope_type, **valid_type**, **valid_hours**}], total}` |
+| 说明 | 只返回**活动中**且在领取时间内的批次；`can_receive` 已综合「剩余库存 > 0」与「未达限领张数」，前端直接用它决定按钮能否点击。**v1.7.12 新增 `valid_type`**（1=固定时间段，此时 `use_start_time/use_end_time` 即固定可用期；**2=领取后 N 小时可用**，`valid_hours` 为小时数，实际可用期以领券成功返回的 `use_start_time/use_end_time` 为准）——`valid_type=2` 时批次上的 `use_start_time/use_end_time` 仅是兜底值，**展示文案请拼「领取后 N 小时内可用」，别展示批次时间** |
 | 失败 | `{code:400, msg:'缺少参数：uid'}` |
 
 #### 4.8.2 领取优惠券
@@ -500,6 +500,7 @@ async onGetPhone(e) {
 
 | 版本 | 日期 | 涉及接口 | 变更内容 | 前端是否需改 |
 |---|---|---|---|---|
+| v1.7.12 | 2026-11-08 | `GET /getCouponList`、`POST /receiveCoupon` | **优惠券支持「领取后 N 小时可用」**：可领列表新增 `valid_type`（1=固定时间段 / 2=领取后N小时可用）与 `valid_hours`。`valid_type=2` 时**批次上的 `use_start_time/use_end_time` 只是兜底值**，真实可用期以领券成功返回的 `use_start_time/use_end_time`（= 领券时刻 ~ +N 小时）为准；券包/结算页的 `usable`、`state` 判断逻辑不变 | **可选**：`valid_type=2` 的券建议把可领列表文案拼成「领取后 N 小时内可用」（别展示批次时间）；不展示也不会出错，领券后券包里的过期判断服务端已处理 |
 | v1.7.7 | 2026-11-02 | `GET /getUserCoupons` | **券包新增「已过期」状态**：`status` 字段只有 0/1/2 表达不了过期，现新增只读的**派生状态** `state`（`usable`/`not_start`/**`expired`**/`used`/`invalid`）与中文 `state_text`。**服务端已按「可用在前、过期靠后」排好序**。筛选也支持传 `status=expired`/`usable` | **需要**：券包展示改用 `state_text`（用 `status_text` 的话过期券会一直显示「未使用」）；**过期券保留并置灰**展示即可，不要隐藏（用户要能看到自己领过什么） |
 | v1.7.6 | 2026-11-01 | `GET /getCarList`、`GET /getCarInfo` | **车辆对象新增详情页三字段**：`images`（轮播图 URL 数组，最多 8 张，**`images[0]` 是主图**）、`tags`（标签数组，最多 6 个）、`config`（配置键值对对象，如 `{"座位":"5座","排量":"2.0T"}`）。三个字段**恒为数组/对象**（不会是 `null`、也不会是字符串），可直接渲染 | **需要**：详情页用 `images` 做轮播、`tags` 做标签行、`config` 渲染配置表。**用户评价本期无数据**，前端先不要接评价区块 |
 | v1.7.6 | 2026-11-01 | 后台车辆录入 | 车辆管理新增「轮播图（多图，≤5MB/张，可设主图）」「标签（动态增删）」「配置参数（键值对增删）」三组录入项；**轮播图第 1 张自动同步为主图** | 否（运营侧操作）。**运营需先补录标签与配置，否则详情页这两块为空** |

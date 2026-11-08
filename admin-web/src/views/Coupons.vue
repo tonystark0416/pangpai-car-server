@@ -39,7 +39,8 @@
         </el-table-column>
         <el-table-column label="使用时间" width="200">
           <template #default="{ row }">
-            <span class="sub-fee">{{ formatDateTime(row.use_start_time) }} ~<br />{{ formatDateTime(row.use_end_time) }}</span>
+            <span v-if="Number(row.valid_type) === 2" class="sub-fee">领取后 {{ row.valid_hours }} 小时内可用</span>
+            <span v-else class="sub-fee">{{ formatDateTime(row.use_start_time) }} ~<br />{{ formatDateTime(row.use_end_time) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="scope_text" label="适用范围" width="110" />
@@ -96,9 +97,20 @@
           <el-date-picker v-model="receiveRange" type="datetimerange" value-format="YYYY-MM-DD HH:mm:ss"
             start-placeholder="开始" end-placeholder="结束" :disabled="isActive" style="width: 100%" />
         </el-form-item>
-        <el-form-item label="使用时间" required>
+        <el-form-item label="有效期类型" required>
+          <el-radio-group v-model="form.valid_type" :disabled="isActive">
+            <el-radio :value="1">固定时间段</el-radio>
+            <el-radio :value="2">领取后N小时内可用</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="form.valid_type === 1" label="使用时间" required>
           <el-date-picker v-model="useRange" type="datetimerange" value-format="YYYY-MM-DD HH:mm:ss"
             start-placeholder="开始" end-placeholder="结束" :disabled="isActive" style="width: 100%" />
+        </el-form-item>
+        <el-form-item v-if="form.valid_type === 2" label="可用时长" required>
+          <el-input-number v-model="form.valid_hours" :min="1" :max="8760" :step="1" :disabled="isActive"
+            style="width: 100%" />
+          <div class="tip">用户领取后 {{ form.valid_hours }} 小时内可用，过期自动失效</div>
         </el-form-item>
         <el-form-item label="使用范围" required>
           <el-radio-group v-model="form.scope_type" :disabled="isActive">
@@ -154,6 +166,8 @@ function blankForm() {
     scope_type: 1,
     user_scope: 0,
     bear_type: 'platform',
+    valid_type: 1,
+    valid_hours: 24,
     status: 0,
   };
 }
@@ -218,6 +232,8 @@ function openForm(row) {
       scope_type: Number(row.scope_type),
       user_scope: Number(row.user_scope),
       bear_type: row.bear_type,
+      valid_type: Number(row.valid_type) === 2 ? 2 : 1,
+      valid_hours: Number(row.valid_hours) || 24,
       status: Number(row.status),
     });
     receiveRange.value = [formatDateTime(row.receive_start_time), formatDateTime(row.receive_end_time)];
@@ -247,8 +263,16 @@ function buildPayload() {
   if (!isActive.value) {
     payload.receive_start_time = receiveRange.value[0];
     payload.receive_end_time = receiveRange.value[1];
-    payload.use_start_time = useRange.value[0];
-    payload.use_end_time = useRange.value[1];
+    payload.valid_type = Number(form.valid_type) === 2 ? 2 : 1;
+    if (payload.valid_type === 2) {
+      payload.valid_hours = Number(form.valid_hours);
+      // 相对有效期：使用时间由领券时刻生成，不传固定时间段
+      payload.use_start_time = receiveRange.value[0];
+      payload.use_end_time = receiveRange.value[1];
+    } else {
+      payload.use_start_time = useRange.value[0];
+      payload.use_end_time = useRange.value[1];
+    }
   }
   return payload;
 }
@@ -258,7 +282,11 @@ function validateForm() {
   if (!(Number(form.amount) > 0)) return '面额必须大于 0';
   if (!isActive.value) {
     if (!receiveRange.value || receiveRange.value.length !== 2) return '请选择领取时间范围';
-    if (!useRange.value || useRange.value.length !== 2) return '请选择使用时间范围';
+    if (Number(form.valid_type) === 1) {
+      if (!useRange.value || useRange.value.length !== 2) return '请选择使用时间范围';
+    } else if (!(Number(form.valid_hours) >= 1)) {
+      return '请填写领取后可用时长（1~8760 小时）';
+    }
     if (form.scope_type === 2 && !scopeCarIds.value.length) return '请选择适用车辆';
   }
   return null;
