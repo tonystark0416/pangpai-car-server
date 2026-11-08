@@ -37,6 +37,14 @@ const config = {
     secret: env('WX_SECRET'),
   },
 
+  /** v1.7.14 小程序订阅消息（模板 ID 未配置时对应模板静默，不影响业务） */
+  subscribe: {
+    miniprogramState: env('SUB_MINIPROGRAM_STATE', 'formal'),
+    orderStatusTmplId: env('SUB_TMPL_ORDER_STATUS'),
+    activityTmplId: env('SUB_TMPL_ACTIVITY'),
+    couponExpireTmplId: env('SUB_TMPL_COUPON_EXPIRE'),
+  },
+
   /**
    * 业务标识：auth 表的 biz_code
    * v1.6.15：用户体系已拆分到 pp_user / pp_user_auth（原 adp_user 留给其他项目），

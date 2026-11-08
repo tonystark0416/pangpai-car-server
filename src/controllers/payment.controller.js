@@ -195,6 +195,8 @@ class PaymentController {
           [{ key: '订单号', value: result.out_trade_no }]
         );
 
+        // （v1.7.14：订阅消息触发点已移至后台订单状态变更——已取车/已还车，支付成功不再发送）
+
         replySuccess();
       } catch (error) {
         console.error('[pay-callback] 处理异常:', error);

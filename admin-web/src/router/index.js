@@ -25,6 +25,7 @@ const router = createRouter({
           meta: { title: '支付管理' },
         },
         { path: 'users', component: () => import('../views/Users.vue'), meta: { title: '用户管理' } },
+        { path: 'crm', component: () => import('../views/UserCrm.vue'), meta: { title: '用户 CRM' } },
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },

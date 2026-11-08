@@ -6,6 +6,7 @@ const refundService = require('../../services/refund.service');
 const orderModel = require('../../models/order.model');
 const payModel = require('../../models/pay.model');
 const WechatPayV2 = require('../../services/wechat/pay');
+const subscribe = require('../../services/wechat/subscribe');
 const config = require('../../config');
 const ExcelJS = require('exceljs');
 const dayjs = require('dayjs');
@@ -48,6 +49,20 @@ async function updateStatus(req, res) {
   if (!affected) {
     return res.json({ code: 404, msg: '订单不存在' });
   }
+
+  // v1.7.14：订单状态提醒订阅消息——已取车(1)/已还车(2)时异步发送给用户
+  // 尽力而为：模板未配置/用户未订阅/失败均静默，不影响本接口应答
+  if ([1, 2].includes(Number(order_status))) {
+    const statusText = { 1: '已取车', 2: '已还车' }[Number(order_status)];
+    adminModel
+      .getOrderDetail(req.params.id)
+      .then((detail) => detail && subscribe.sendOrderStatusNotify(detail, statusText))
+      .then((r) => {
+        if (r) console.log('[order-status-notify]', r.ok ? '发送成功' : '跳过: ' + r.errmsg);
+      })
+      .catch((e) => console.error('[order-status-notify] 异常:', e.message));
+  }
+
   res.json({ code: 0 });
 }
 

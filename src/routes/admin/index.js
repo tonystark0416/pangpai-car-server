@@ -10,6 +10,7 @@ const car = require('../../controllers/admin/car.controller');
 const order = require('../../controllers/admin/order.controller');
 const coupon = require('../../controllers/admin/coupon.controller');
 const pay = require('../../controllers/admin/pay.controller');
+const crm = require('../../controllers/admin/crm.controller');
 const upload = require('../../controllers/admin/upload.controller');
 const { uploadCarImage } = require('../../middlewares/carUpload');
 
@@ -71,5 +72,9 @@ router.get('/orders/:orderSn/pay-records', asyncHandler(pay.listByOrder));
 // 每日对账（v1.7.11）：微信账单 vs 本地流水核对
 router.get('/reconcile', asyncHandler(pay.reconcileList));
 router.post('/reconcile/run', asyncHandler(pay.reconcileRun));
+
+// 用户 CRM（v1.7.14）：对指定用户推送订阅消息（活动通知/优惠过期提醒）
+router.get('/crm/templates', asyncHandler(crm.templates));
+router.post('/crm/push', asyncHandler(crm.push));
 
 module.exports = router;

@@ -1,6 +1,6 @@
 # 庞派汽车（pangpai-car）需求文档
 
-> 版本：v1.7.12 ｜ 日期：2026-11-08 ｜ 状态：迭代中
+> 版本：v1.7.14 ｜ 日期：2026-11-08 ｜ 状态：迭代中
 >
 > **每次迭代必须同步更新本文档正文与 Change Log，否则视为迭代未完成。**
 
@@ -532,6 +532,33 @@ total_price                                     // 保持原价不变，GMV/报�
 
 ### 2.4 运营管理
 
+#### 小程序订阅消息（v1.7.13，v1.7.14 扩展为三模板）
+
+用户在小程序端 `wx.requestSubscribeMessage` 授权后，服务端按场景发送。设计原则：**尽力而为，绝不影响主流程**——一次性订阅「授权一次发一条」，额度微信侧不可查（不做额度记录、不建表，以发送结果为准），43101（未订阅/额度用完）属常态静默，任何异常只记日志不抛出。
+
+**三模板触发方式**（v1.7.14 定）：
+
+| 模板 | env 配置 | 触发方式 |
+|---|---|---|
+| 订单状态提醒 | `SUB_TMPL_ORDER_STATUS` | **自动**：后台订单操作改为「已取车(1)」/「已还车(2)」时发（`PUT /orders/:id/status` 内异步触发）；支付成功不触发 |
+| 新活动上线通知 | `SUB_TMPL_ACTIVITY` | **手动**：后台「用户 CRM」页面，运营选用户填内容推送 |
+| 优惠过期提醒 | `SUB_TMPL_COUPON_EXPIRE` | **手动**：同上 |
+
+**服务端结构**：
+
+| 项 | 内容 |
+|---|---|
+| 封装 | `src/services/wechat/subscribe.js`：`sendSubscribe`（通用，返回 `{ok, errcode, errmsg}`）+ `pushToUser`（按模板 key + 字段值推送）+ `sendOrderStatusNotify`（订单状态场景） |
+| **字段自动获取（v1.7.14 定稿）** | 调 `GET /wxaapi/newtmpl/gettemplate` 拉取账号全部模板，按 env 配置的模板 ID 匹配，解析 content（`订单编号:{{character_string9.DATA}}` → key/中文名/类型=key 前缀）；**缓存文件 1 小时（`wx_subscribe_templates.json`），拉取失败回退旧缓存；平台改模板后自动跟上，零代码维护**。真实字段：订单状态通知 `character_string9/phrase14/thing4`；新活动上线通知 `time2/thing3`；优惠券使用提醒 `thing1/amount2/time3/thing4` |
+| 类型校验 | 推送前按类型强校验（thing ≤20 字、phrase ≤5 字、character_string ≤32 字）防 47003 |
+| 用户 CRM | `GET /admin-api/crm/templates`（字段定义下发，前端动态渲染表单）+ `POST /admin-api/crm/push`（`{uid, template_key, data}`，发送结果如实返回给运营：成功/未订阅/openid 缺失等）；后台页面「用户 CRM」（用户远程搜索 + 选模板 + 动态表单 + 二次确认） |
+| 配置 | `SUB_MINIPROGRAM_STATE`（formal/developer/trial）；模板 ID 未配置时**对应模板静默**（不查 openid、不调微信），填入 env 即生效 |
+| 小程序端 | 调 `wx.requestSubscribeMessage({ tmplIds: [...] })` 申请授权（三个模板 ID 需配置到小程序端）；**后端不提供上报接口、不建额度表**（额度以微信为准） |
+
+**错误码速查**：43101 未订阅/额度用完（常态）；47003 data 格式不符；40003 openid 无效；41030 page 路径不存在（须为**已发布**版本的页面）；40037 模板 ID 无效。
+
+> **待办**：三个模板的 data 字段名目前按典型结构占位（注册表内），需对照公众平台模板详情页核实，对不上只改 `subscribe.js` 的 `TEMPLATES` 一处。
+
 #### 管理后台（v1.6.0，`/admin-api`，JWT 鉴权）
 
 | 接口 | 方法 | 说明 |
@@ -724,6 +751,8 @@ npm run task:paycheck        # 常驻（本地调试用，线上交给 PM2）
 
 | 版本 | 日期 | 变更内容 | 备注 |
 |---|---|---|---|
+| v1.7.14 | 2026-11-08 | **订阅消息三模板接入 + 用户 CRM**：① `subscribe.js` 重构——模板注册表（订单状态提醒/新活动上线通知/优惠过期提醒，env：`SUB_TMPL_ORDER_STATUS`/`SUB_TMPL_ACTIVITY`/`SUB_TMPL_COUPON_EXPIRE`），`sendSubscribe` 返回 `{ok,errcode,errmsg}`，`pushToUser`/`sendOrderStatusNotify` 业务封装；② **模板字段自动获取**（真调 `GET /wxaapi/newtmpl/gettemplate` 验证后定稿）：按 env 模板 ID 匹配、解析 content 得字段（key/中文名/类型），缓存 1 小时失败回退旧缓存，平台改模板零代码维护——占位字段全部纠正为真实值（订单状态 `character_string9/phrase14/thing4`，活动 `time2/thing3`，优惠券 `thing1/amount2/time3/thing4`）；③ **订单状态提醒自动触发**：后台 `PUT /orders/:id/status` 改为已取车(1)/已还车(2)时异步发（支付成功触发已按需求移除）；④ **用户 CRM**（后台新功能/新页面）：`GET /crm/templates` 下发自动字段（未配置模板 `enabled=false` 前端禁用）、`POST /crm/push` 推送指定用户，失败原因如实展示；类型校验 thing≤20/phrase≤5/character_string≤32 防 47003。实测：字段自动解析、下发、参数/字段校验、真实推送全链路（到达微信，本地 openid 不匹配返回 40003 属环境差异）；admin-web 构建通过 | 小程序端需调 `wx.requestSubscribeMessage` 配置三个模板 ID 授权；服务器验证推送需用已授权的真实用户 |
+| v1.7.13 | 2026-11-08 | **小程序订阅消息（服务端发送能力）**：① 新增 `src/services/wechat/subscribe.js`——`sendSubscribe` 通用发送 + `sendPaySuccessNotify` 支付成功通知（按 uid 查 `pp_user_auth` 取 openid，复用现有 access_token 缓存）；② 触发点：支付回调成功后异步发（与企微通知并列）；③ 设计原则「尽力而为」：一次性订阅额度微信侧不可查，**不做额度记录、不建表**（以发送结果为准，43101 未订阅/额度用完属常态静默跳过），任何异常只记日志不抛出，绝不影响支付主流程；④ 配置驱动：`SUB_TMPL_PAY_SUCCESS` 未配置时**整体静默**（不查 openid、不调微信），模板申请下来填入 env 即生效；`SUB_MINIPROGRAM_STATE`/`SUB_PAY_SUCCESS_PAGE` 可配；⑤ data 字段集中一处，模板对齐只改一个函数。实测：模块加载、未配置跳过、真调微信接口（假 openid 返回 40003 被正确静默）三条路径全通过，鉴权与请求格式链路验证无误。**小程序端需调 `wx.requestSubscribeMessage` 申请授权**（详见 §2.4 订阅消息小节） | 模板 ID 待用户在公众平台申请后配置。等价于「功能开关默认关」——上线无任何行为变化 |
 | v1.7.12 | 2026-11-08 | **优惠券相对有效期：「领取后 N 小时可用」**：① `pp_coupon` 加 `valid_type`（1=固定时间段/2=领取后N小时）与 `valid_hours`（1~8760）两列（`scripts/migrate_coupon_validtype.js` 幂等加列，存量批次默认 1 行为不变）；② 领券快照分支：`valid_type=2` 时用户券 `use_start_time`=领券时刻、`use_end_time`=领券时刻+N 小时——**下游派生状态/筛选/核验全部只认用户券快照，一行未改**；③ 批次状态口径：相对券批次只看领取窗口（领取截止=结束，无 `claim_ended`），批次上 use_start/use_end 仅存领取窗口兜底；派生函数与虚拟状态筛选 SQL 同步适配；④ 后台：创建/编辑表单加「有效期类型」选项（改为相对类型必须同时给时长），列表「使用时间」列相对券显示「领取后 N 小时内可用」（`valid_text`），校验 valid_hours 范围；⑤ C 端 `/getCouponList` 新增返回 `valid_type`/`valid_hours` | **设计核心**：v1.7.7 快照机制的直接受益——用户券可用期本来就是领券时刻写死的绝对时间，相对有效期只是换了个快照来源，过期判断/结算核验/券包展示零改动。批次与用户券状态分离：批次管「还能不能领」，用户券按各自快照独立过期。实测：相对券领券快照精确 24 小时（17:34:11 → 次日 17:34:11）、我的券派生 `usable`、C 端可领列表带 `valid_type/valid_hours`、批次派生 active→领取截止后 ended、虚拟筛选 `ended` 命中、固定券全回归（含 valid_text）；期间发现并修复后台列表 `valid_text` 拼接对 mysql2 返回的 Date 对象调 `.slice` 导致的 500（改用 dayjs 格式化）；测试批次/测试券已全部废弃清理，迁移幂等重跑通过。admin-web 构建通过 |
 | v1.7.11 | 2026-11-04 | **每日对账（资金第三道保险，账实核对闭环）**：① `pay.js` 新增 `downloadBill`（`/pay/downloadbill`）+ `parseBill` 账单解析 + `splitCsvLine` 引号感知拆分——**账单返回是 CSV 不是 XML**（走 `requestRaw()` 拿原文），实测格式：逗号分隔、带 BOM、金额带 `` ` `` 前缀、含逗号字段用双引号包裹、无账单返回 XML `20002`（No Bill Exist / Bill Creating）；② 新表 `pp_pay_reconcile`（`scripts/migrate_pay_reconcile.js` 幂等建表）一天一行存对账结果，`diff_detail`/`summary` 存 JSON 留档可复现；③ 对账服务 `reconcile.service.js`：微信账单（**资金真源**）vs 本地流水逐笔核对——微信有本地无 → **自动补录**（`source=reconcile`，由账单行伪造微信返回复用 `buildPayRecord*`，口径与回调/兜底一致）；金额不一致/本地有微信无/微信已退款但订单未标记 → **只告警不改**（动钱口径必须人工确认）；④ 定时任务 `dailyReconcile.js`：PM2 应用 `pangpai-reconcile`（`cron_restart` 每天 09:30 跑前一天，跑完即退出），有差异发企微通知；⑤ 后台「支付管理 → 每日对账」标签页：结果列表、差异明细弹窗、手动对账任意历史日期（`POST /admin-api/reconcile/run`，当天及未来拒绝——账单 T+1） | **为什么 09:30**：账单 T+1 生成，凌晨实测仍返回 `Bill Creating`。**三级资金保险体系**：回调（实时）→ 查单兜底（分钟级，管支付漏单）→ 每日对账（天级，兜住一切漏网含手工退款）。实测：11-01/11-02 真实账单解析正确（支付行/退款行/汇总区）；对账 11-02 「完全一致」且重复对账幂等；**自愈测试**——删除 11-02 退款流水后对账自动补录（￥349，来源「每日对账补录」，退款单号 `RPP20261101231522`），数据复原；日期校验（当天/非法日期）正确拒绝；企微通知为小程序消息通道（本地 IP 白名单外会失败，不影响对账） |
 | v1.7.10 | 2026-11-04 | **手机端会员注册协议页 + 后台「核对微信支付状态」**：① 新建 `public/` 静态站点（`express.static`，默认 fallthrough——文件不存在走 404 路由而非像 `/images` 抛 500），协议页 `public/agreement/membership.html`（单文件 H5、无外部依赖，内容区有「改哪里」注释），访问 `https://pangpai-car.com/agreement/membership.html`，**静态文件更新即时生效无需重启 pm2**；② 后台订单详情新增「核对微信支付状态」按钮（`GET /admin-api/orders/:orderSn/check-wxpay`，**只读不改任何数据**）：调微信查单 + 退款查询与本地对比，逐条列出不一致（微信已退款但本地未标记——商户平台手工退款场景、回调丢失、金额不符等），退款明细**只传 `out_trade_no` 查询**（传我们的 `R+订单号` 规则查不到手工退款） | 协议页给运营自助更新（宝塔直接编辑服务器文件保存即生效）。核对按钮源于 `PP20261011204940` 那笔手工退款教训。实测：四类真实订单核对全对（已退款/已支付/未支付/不存在），stub 单测覆盖手工退款、回调丢失、金额不符、完全一致四分支（金额不符分支连 stub 单位错误都被正确抓出——total_fee 按分换算）。`/queryWxPayOrder` 保持不动：小程序联调文档在用且无 token 可加，管理端改用新接口 |
