@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>庞派汽车 - 高端汽车租赁服务 | 自驾出行首选</title>
+<meta name="description" content="庞派汽车提供豪华轿车、商务用车、跑车等多元化汽车租赁服务，车况保障、全程保险、灵活租期，扫码进入微信小程序即可在线选车下单。">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif; background: #0b0e13; color: #e8eaed; line-height: 1.7; }
+  a { text-decoration: none; color: inherit; }
+  .container { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+  /* ===== 导航 ===== */
+  header { position: sticky; top: 0; z-index: 100; background: rgba(11,14,19,.92); backdrop-filter: blur(10px); border-bottom: 1px solid rgba(255,255,255,.08); }
+  .nav { display: flex; align-items: center; justify-content: space-between; height: 68px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-size: 22px; font-weight: 700; letter-spacing: 1px; }
+  .logo-mark { width: 38px; height: 38px; border-radius: 50%; background: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; color: #0b0e13; font-size: 16px; }
+  .logo small { font-size: 12px; font-weight: 400; color: #9aa0a6; letter-spacing: 3px; }
+  nav ul { display: flex; gap: 34px; list-style: none; }
+  nav a { font-size: 15px; color: #c5c9ce; transition: color .2s; }
+  nav a:hover { color: #2fd873; }
+
+  /* ===== Hero ===== */
+  .hero { display: flex; align-items: center; justify-content: space-between; gap: 40px; padding: 90px 0 100px; }
+  .hero-text h1 { font-size: 44px; line-height: 1.25; font-weight: 800; }
+  .hero-text h1 span { color: #2fd873; }
+  .hero-text p { margin-top: 22px; font-size: 17px; color: #a8adb4; max-width: 520px; }
+  .hero-tags { display: flex; gap: 12px; margin-top: 30px; flex-wrap: wrap; }
+  .tag { padding: 7px 16px; border: 1px solid rgba(47,216,115,.4); border-radius: 999px; font-size: 13px; color: #2fd873; }
+  .qr-box { flex-shrink: 0; background: #12161d; border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 28px; text-align: center; }
+  .qr-box img { width: 190px; height: 190px; border-radius: 12px; }
+  .qr-box p { margin-top: 14px; font-size: 14px; color: #a8adb4; }
+  .qr-box strong { display: block; margin-top: 4px; color: #fff; font-size: 16px; }
+
+  /* ===== 通用 section ===== */
+  section { padding: 80px 0; }
+  .section-head { text-align: center; margin-bottom: 52px; }
+  .section-head h2 { font-size: 30px; font-weight: 700; }
+  .section-head .en { margin-top: 8px; font-size: 13px; letter-spacing: 4px; color: #2fd873; text-transform: uppercase; }
+  .section-head p { margin-top: 14px; color: #a8adb4; }
+
+  /* ===== 优势 ===== */
+  .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .feature { background: #12161d; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; padding: 32px 26px; transition: transform .2s, border-color .2s; }
+  .feature:hover { transform: translateY(-4px); border-color: rgba(47,216,115,.5); }
+  .feature .icon { font-size: 30px; }
+  .feature h3 { margin-top: 16px; font-size: 17px; }
+  .feature p { margin-top: 10px; font-size: 14px; color: #a8adb4; }
+
+  /* ===== 车型 ===== */
+  #cars { background: #0e1218; }
+  .cars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .car { background: #12161d; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; overflow: hidden; transition: transform .2s; }
+  .car:hover { transform: translateY(-4px); }
+  .car-img { width: 100%; height: 200px; object-fit: cover; background: #1a1f27; display: block; }
+  .car-body { padding: 20px 22px 24px; }
+  .car-body h3 { font-size: 17px; }
+  .car-body .desc { margin-top: 6px; font-size: 13px; color: #a8adb4; }
+  .car-price { margin-top: 14px; display: flex; align-items: baseline; gap: 10px; }
+  .car-price .now { color: #2fd873; font-size: 22px; font-weight: 700; }
+  .car-price .now small { font-size: 13px; font-weight: 400; }
+  .car-price .orig { color: #6b7075; font-size: 13px; text-decoration: line-through; }
+
+  /* ===== 流程 ===== */
+  .steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; counter-reset: step; }
+  .step { position: relative; background: #12161d; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; padding: 30px 24px; }
+  .step .num { font-size: 15px; font-weight: 800; color: #2fd873; }
+  .step h3 { margin-top: 12px; font-size: 16px; }
+  .step p { margin-top: 8px; font-size: 13px; color: #a8adb4; }
+
+  /* ===== 关于 ===== */
+  .about { display: flex; gap: 50px; align-items: center; }
+  .about-text { flex: 1; }
+  .about-text h2 { font-size: 28px; margin-bottom: 18px; }
+  .about-text p { color: #a8adb4; font-size: 15px; margin-bottom: 12px; }
+  .about-stats { flex-shrink: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .stat { background: #12161d; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; padding: 26px 22px; text-align: center; }
+  .stat b { display: block; font-size: 26px; color: #2fd873; }
+  .stat span { font-size: 13px; color: #a8adb4; }
+
+  /* ===== 联系 / footer ===== */
+  .contact { background: #0e1218; }
+  .contact-grid { display: flex; gap: 60px; align-items: center; justify-content: space-between; }
+  .contact-info h2 { font-size: 28px; margin-bottom: 18px; }
+  .contact-info li { list-style: none; margin-top: 10px; color: #a8adb4; font-size: 15px; }
+  .contact-info li b { color: #e8eaed; font-weight: 600; }
+  footer { border-top: 1px solid rgba(255,255,255,.08); padding: 26px 0; text-align: center; color: #6b7075; font-size: 13px; }
+  footer a { color: #9aa0a6; }
+
+  @media (max-width: 900px) {
+    nav ul { display: none; }
+    .hero { flex-direction: column; padding: 56px 0; text-align: center; }
+    .hero-text p { margin-left: auto; margin-right: auto; }
+    .hero-tags { justify-content: center; }
+    .features, .steps { grid-template-columns: repeat(2, 1fr); }
+    .cars { grid-template-columns: 1fr; }
+    .about, .contact-grid { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="container nav">
+    <div class="logo">
+      <div class="logo-mark">PP</div>
+      <div>庞派汽车<br><small>PANGPAI AUTO</small></div>
+    </div>
+    <nav>
+      <ul>
+        <li><a href="#features">服务优势</a></li>
+        <li><a href="#cars">热门车型</a></li>
+        <li><a href="#steps">服务流程</a></li>
+        <li><a href="#about">关于我们</a></li>
+        <li><a href="#contact">联系我们</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<div class="container hero">
+  <div class="hero-text">
+    <h1>高端汽车租赁<br>让每一段旅程<span>从容出发</span></h1>
+    <p>庞派汽车专注高品质汽车租赁服务，豪华轿车、商务用车、性能跑车一应俱全。在线选车、便捷下单、送车上门，为您的商务出行与自驾旅行提供可靠座驾。</p>
+    <div class="hero-tags">
+      <span class="tag">✓ 企业资质齐全</span>
+      <span class="tag">✓ 全程保险保障</span>
+      <span class="tag">✓ 车况透明可查</span>
+      <span class="tag">✓ 灵活租期</span>
+    </div>
+  </div>
+  <div class="qr-box">
+    <img src="/assets/wx-qrcode.jpg" alt="庞派汽车微信小程序二维码">
+    <p>微信扫码进入小程序</p>
+    <strong>在线选车 · 极速下单</strong>
+  </div>
+</div>
+
+<section id="features">
+  <div class="container">
+    <div class="section-head">
+      <h2>为什么选择庞派汽车</h2>
+      <div class="en">Why PANGPAI</div>
+      <p>从车辆到服务，每一个环节都为您的出行体验负责</p>
+    </div>
+    <div class="features">
+      <div class="feature">
+        <div class="icon">🚗</div>
+        <h3>车源丰富 品类齐全</h3>
+        <p>豪华轿车、商务七座、性能跑车多品类在库，满足商务接待、家庭出游、婚庆用车等多样化场景。</p>
+      </div>
+      <div class="feature">
+        <div class="icon">🛡️</div>
+        <h3>全程保险保障</h3>
+        <p>租赁车辆均投保齐全，价格透明无隐形消费，让您每次出行都安心无忧。</p>
+      </div>
+      <div class="feature">
+        <div class="icon">📋</div>
+        <h3>车况透明可查</h3>
+        <p>每台车辆配有实拍图片、配置参数与标签说明，下单前即可全面了解车况。</p>
+      </div>
+      <div class="feature">
+        <div class="icon">⚡</div>
+        <h3>在线便捷下单</h3>
+        <p>微信小程序在线选车、下单、支付，订单状态实时可查，还车便捷，省时省心。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="cars">
+  <div class="container">
+    <div class="section-head">
+      <h2>热门车型</h2>
+      <div class="en">Popular Cars</div>
+      <p>更多车型与实时价格，请进入微信小程序查看</p>
+    </div>
+    <div class="cars">
+      <div class="car">
+        <img class="car-img" src="https://p3.dcarimg.com/img/tos-cn-i-dcdx/aecb43bc93d9486492c05cee9fe20163~524x0.webp" alt="保时捷911 TurboS">
+        <div class="car-body">
+          <h3>保时捷911 TurboS</h3>
+          <div class="desc">跑车 · 4座 · 24款</div>
+          <div class="car-price"><span class="now"><small>¥</small>4800<small>/天起</small></span><span class="orig">¥5500</span></div>
+        </div>
+      </div>
+      <div class="car">
+        <img class="car-img" src="https://p3.dcarimg.com/img/tos-cn-i-dcdx/bc14c96bbdc449e78371c58d80794692~1200x0.png" alt="奔驰C级">
+        <div class="car-body">
+          <h3>奔驰C级</h3>
+          <div class="desc">高端奢华 · 精致座驾</div>
+          <div class="car-price"><span class="now"><small>¥</small>150<small>/天起</small></span><span class="orig">¥300</span></div>
+        </div>
+      </div>
+      <div class="car">
+        <img class="car-img" src="https://p3.dcarimg.com/img/tos-cn-i-dcdx/dfc7b0a4a6264590a7790256ec96c758~1200x0" alt="奔驰S级">
+        <div class="car-body">
+          <h3>奔驰S级</h3>
+          <div class="desc">商务之王 · 6缸大马力</div>
+          <div class="car-price"><span class="now"><small>¥</small>202<small>/天起</small></span><span class="orig">¥502</span></div>
+        </div>
+      </div>
+      <div class="car">
+        <img class="car-img" src="https://p3.dcarimg.com/img/tos-cn-i-dcdx/8a3daca02bc04bfea188f572f278aaf6~524x0.webp" alt="宝马3系2023款">
+        <div class="car-body">
+          <h3>宝马3系 2023款</h3>
+          <div class="desc">2.0T · 4门5座</div>
+          <div class="car-price"><span class="now"><small>¥</small>199<small>/天起</small></span><span class="orig">¥250</span></div>
+        </div>
+      </div>
+      <div class="car">
+        <img class="car-img" src="https://p3.dcarimg.com/img/tos-cn-i-dcdx/b2840cd65c064d7a830adb574272813f~524x0.webp" alt="宝马5系2022款">
+        <div class="car-body">
+          <h3>宝马5系 2022款</h3>
+          <div class="desc">白色 · 4缸 · 4门5座</div>
+          <div class="car-price"><span class="now"><small>¥</small>100<small>/天起</small></span><span class="orig">¥300</span></div>
+        </div>
+      </div>
+      <div class="car">
+        <img class="car-img" src="https://p3.dcarimg.com/img/tos-cn-i-dcdx/714486ba47484b529ce61d1017026007~524x0.webp" alt="传祺M8宗师版">
+        <div class="car-body">
+          <h3>传祺M8 宗师版</h3>
+          <div class="desc">商务七座 · 接待首选</div>
+          <div class="car-price"><span class="now"><small>¥</small>202<small>/天起</small></span><span class="orig">¥502</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="steps">
+  <div class="container">
+    <div class="section-head">
+      <h2>服务流程</h2>
+      <div class="en">How It Works</div>
+      <p>四步开启您的安心旅程</p>
+    </div>
+    <div class="steps">
+      <div class="step"><div class="num">01</div><h3>在线选车</h3><p>微信扫码进入小程序，浏览实拍车辆与透明价格。</p></div>
+      <div class="step"><div class="num">02</div><h3>提交订单</h3><p>选择取还车时间与地点，在线支付，即时确认。</p></div>
+      <div class="step"><div class="num">03</div><h3>快乐用车</h3><p>按约定取车验车，全程保险保障，畅享旅程。</p></div>
+      <div class="step"><div class="num">04</div><h3>便捷还车</h3><p>按约定地点还车，线上完成结算，方便快捷。</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="about">
+  <div class="container about">
+    <div class="about-text">
+      <h2>关于庞派汽车</h2>
+      <p>庞派汽车是一家专业从事汽车租赁服务的企业，致力于为个人与企业客户提供高品质、可信赖的出行解决方案。公司车辆资源充足、品类丰富，覆盖经济轿车到豪华跑车的多层次需求。</p>
+      <p>我们坚持「车况透明、价格透明、服务透明」的经营理念，依托线上小程序平台实现选车、下单、支付、售后的全流程数字化，让租车像叫车一样简单。</p>
+    </div>
+    <div class="about-stats">
+      <div class="stat"><b>多品类</b><span>车型齐全</span></div>
+      <div class="stat"><b>全流程</b><span>线上化服务</span></div>
+      <div class="stat"><b>保险齐</b><span>出行有保障</span></div>
+      <div class="stat"><b>优口碑</b><span>用户信赖</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="contact" class="contact">
+  <div class="container contact-grid">
+    <div class="contact-info">
+      <h2>联系我们</h2>
+      <ul>
+        <li><b>微信小程序：</b>庞派汽车（微信扫码即可进入）</li>
+      </ul>
+    </div>
+    <div class="qr-box">
+      <img src="/assets/wx-qrcode.jpg" alt="庞派汽车微信小程序二维码">
+      <p>微信扫码进入小程序</p>
+      <strong>庞派汽车</strong>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p>© 2026 庞派汽车 版权所有 | <a href="#">X ICP备XXXXXXXX号-1</a>（请替换为实际备案号）</p>
+  </div>
+</footer>
+
+</body>
+</html>
